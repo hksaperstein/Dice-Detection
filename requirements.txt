@@ -1,0 +1,8 @@
+# Minimal recommended packages
+numpy
+opencv-python
+torch
+torchvision
+scikit-learn
+matplotlib
+albumentations
