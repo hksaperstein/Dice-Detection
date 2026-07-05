@@ -81,10 +81,21 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
     depth = size_mm * ENGRAVE_DEPTH_FRACTION
     glyph_font_size = size_mm * 0.18
 
+    # Phase 1: compute every cut's (value, orientation) against the PRISTINE
+    # mesh, entirely before any boolean modifier is applied. Each
+    # bpy.ops.object.modifier_apply call below rebuilds die_obj.data's
+    # topology (reindexing/reordering polygons), so face_index values from
+    # `assignment` (captured once upfront by geometry.compute_opposite_face_pairs)
+    # must never be re-resolved against die_obj.data.polygons after a cut.
+    planned_cuts = []
     for face_index, value in assignment.items():
         face = die_obj.data.polygons[face_index]
         orient = _face_orientation_matrix(face, die_obj.matrix_world)
+        planned_cuts.append((value, orient))
 
+    # Phase 2: build and apply each cutter using only the precomputed
+    # orientation matrices — no further indexing into die_obj.data.polygons.
+    for value, orient in planned_cuts:
         if glyph_style == "pips":
             for (ox, oy) in PIP_VALUE_LAYOUTS.get(value, [(0, 0)]):
                 bpy.ops.mesh.primitive_uv_sphere_add(radius=size_mm * 0.05)
