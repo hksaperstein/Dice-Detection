@@ -43,10 +43,50 @@ def test_metallic_material_sets_metallic_input_to_one():
     assert bsdf.inputs["Metallic"].default_value == 1.0
 
 
+def test_apply_material_at_slot_index_one_on_empty_mesh_pads_slot_zero():
+    import bpy
+    from dice_gen import geometry, materials
+
+    obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
+    fill_mat = materials.build_fill_material("d6", {"hue": 0.2, "saturation": 0.8, "value": 0.5, "roughness": 0.4})
+    materials.apply_material(obj, fill_mat, slot_index=1)
+    assert len(obj.data.materials) == 2
+    assert obj.data.materials[0] is None
+    assert obj.data.materials[1] is fill_mat
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_apply_material_base_then_fill_sequence_lands_in_correct_slots():
+    import bpy
+    from dice_gen import geometry, materials
+
+    obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
+    base_mat = materials.build_material("d6", "opaque", {"hue": 0.2, "saturation": 0.8, "value": 0.5, "roughness": 0.4})
+    fill_mat = materials.build_fill_material("d6", {"hue": 0.2, "saturation": 0.8, "value": 0.5, "roughness": 0.4})
+    materials.apply_material(obj, base_mat, slot_index=0)
+    materials.apply_material(obj, fill_mat, slot_index=1)
+    assert len(obj.data.materials) == 2
+    assert obj.data.materials[0] is base_mat
+    assert obj.data.materials[1] is fill_mat
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_build_fill_material_returns_valid_material():
+    from dice_gen import materials
+
+    mat = materials.build_fill_material("test_die", {"hue": 0.3, "saturation": 0.8, "value": 0.6, "roughness": 0.4})
+    assert mat is not None
+    assert mat.use_nodes
+    assert mat.node_tree.nodes.get("Principled BSDF") is not None
+
+
 def run():
     test_all_material_categories_build_without_error()
     test_apply_material_appends_to_first_empty_slot()
     test_metallic_material_sets_metallic_input_to_one()
+    test_apply_material_at_slot_index_one_on_empty_mesh_pads_slot_zero()
+    test_apply_material_base_then_fill_sequence_lands_in_correct_slots()
+    test_build_fill_material_returns_valid_material()
 
 
 run_and_report(run)

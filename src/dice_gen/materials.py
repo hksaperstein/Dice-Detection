@@ -74,10 +74,10 @@ def build_material(die_name, category, params):
 
 
 def apply_material(die_obj, mat, slot_index=0):
-    if len(die_obj.data.materials) <= slot_index:
-        die_obj.data.materials.append(mat)
-    else:
-        die_obj.data.materials[slot_index] = mat
+    materials = die_obj.data.materials
+    while len(materials) <= slot_index:
+        materials.append(None)
+    materials[slot_index] = mat
 
 
 def build_fill_material(die_name, params):
