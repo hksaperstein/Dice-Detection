@@ -145,6 +145,59 @@ def _assign_fill_material_to_recessed_faces(die_obj):
     bm.free()
 
 
+def _socket_by_identifier(sockets, identifier):
+    """
+    ShaderNodeMix (data_type='RGBA') exposes several same-named sockets
+    (Factor/A/B repeated per data type: float/vector/color/rotation), so
+    looking them up by .name is ambiguous. Only the identifier is unique.
+    """
+    for socket in sockets:
+        if socket.identifier == identifier:
+            return socket
+    raise KeyError(identifier)
+
+
+def _wire_decal_texture_onto_material(mat, tex_node):
+    """
+    Composites the rendered glyph decal onto a face material's Base Color
+    using the decal image's alpha channel, instead of overwriting Base Color
+    outright. The decal images are rendered with a transparent background
+    (see _render_label_to_image), so their non-glyph pixels are RGB (0,0,0)
+    with alpha 0 -- wiring the texture's Color output straight into Base
+    Color (the previous approach) made every decal-numbered face solid
+    black except for the tiny glyph mark, hiding the die's actual material
+    entirely. Mixing by alpha preserves the underlying material's
+    color/pattern wherever there is no glyph ink, and stamps the glyph
+    where alpha is 1.
+    """
+    nt = mat.node_tree
+    bsdf = nt.nodes["Principled BSDF"]
+    base_color_input = bsdf.inputs["Base Color"]
+
+    existing_link = None
+    for link in nt.links:
+        if link.to_socket == base_color_input:
+            existing_link = link
+            break
+
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = 'RGBA'
+
+    a_color = _socket_by_identifier(mix.inputs, "A_Color")
+    b_color = _socket_by_identifier(mix.inputs, "B_Color")
+    factor = _socket_by_identifier(mix.inputs, "Factor_Float")
+    result_color = _socket_by_identifier(mix.outputs, "Result_Color")
+
+    if existing_link is not None:
+        nt.links.new(existing_link.from_socket, a_color)
+    else:
+        a_color.default_value = tuple(base_color_input.default_value)
+
+    nt.links.new(tex_node.outputs["Color"], b_color)
+    nt.links.new(tex_node.outputs["Alpha"], factor)
+    nt.links.new(result_color, base_color_input)
+
+
 def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size_mm, tmp_dir):
     bpy.context.view_layer.objects.active = die_obj
     bpy.ops.object.mode_set(mode='EDIT')
@@ -152,17 +205,23 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
     bpy.ops.uv.smart_project(island_margin=0.05)
     bpy.ops.object.mode_set(mode='OBJECT')
 
+    base_mat = die_obj.data.materials[0] if len(die_obj.data.materials) > 0 else None
+
     for face_index, value in assignment.items():
         image_path = os.path.join(tmp_dir, f"{die_obj.name}_face{face_index}.png")
         _render_label_to_image(value, glyph_style, image_path)
 
-        mat = bpy.data.materials.new(name=f"{die_obj.name}_face{face_index}_decal")
-        mat.use_nodes = True
+        if base_mat is not None:
+            mat = base_mat.copy()
+            mat.name = f"{die_obj.name}_face{face_index}_decal"
+        else:
+            mat = bpy.data.materials.new(name=f"{die_obj.name}_face{face_index}_decal")
+            mat.use_nodes = True
+
         nt = mat.node_tree
-        bsdf = nt.nodes["Principled BSDF"]
         tex_node = nt.nodes.new("ShaderNodeTexImage")
         tex_node.image = bpy.data.images.load(image_path)
-        nt.links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+        _wire_decal_texture_onto_material(mat, tex_node)
 
         die_obj.data.materials.append(mat)
         die_obj.data.polygons[face_index].material_index = len(die_obj.data.materials) - 1
