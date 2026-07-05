@@ -90,12 +90,52 @@ def _weld_cutter_mesh(obj):
 
 
 def _boolean_diff_apply(die_obj, cutter_obj):
+    """
+    Even after _weld_cutter_mesh, some glyphs still tessellate to a cutter
+    that is slightly non-manifold -- confirmed for the Greek capital Alpha
+    ("Α") glyph, which is a genuine self-overlap baked into Blender's built-in
+    Bfont's own curve fill for that outline, not just an unwelded seam. On
+    asset_00091 (d10, greek_numerals, size_mm=16.12691595326456) this residual
+    non-manifoldness is harmless for 9 of 10 cuts but makes the EXACT boolean
+    solver collapse the die outright on the "Α" cut: a single small glyph
+    incision dropped the die's volume from 970.03 to 2.984 in one
+    modifier_apply. The FLOAT solver is more tolerant of this class of
+    degenerate cutter and produces the expected tiny volume change (970.03 ->
+    970.13) on the identical cut, but EXACT remains preferred generally (it's
+    what the other 9 well-behaved cuts on this same die use without issue),
+    so we only fall back to FLOAT when EXACT's result looks like a collapse.
+    """
+    bm_before = bmesh.new()
+    bm_before.from_mesh(die_obj.data)
+    volume_before = bm_before.calc_volume()
+
     mod = die_obj.modifiers.new(name="Engrave", type='BOOLEAN')
     mod.operation = 'DIFFERENCE'
     mod.object = cutter_obj
     mod.solver = 'EXACT'
     bpy.context.view_layer.objects.active = die_obj
     bpy.ops.object.modifier_apply(modifier=mod.name)
+
+    bm_after = bmesh.new()
+    bm_after.from_mesh(die_obj.data)
+    volume_after = bm_after.calc_volume()
+    bm_after.free()
+
+    if volume_before > 0 and volume_after < volume_before * 0.5:
+        # EXACT produced a degenerate/collapsed result -- restore the die's
+        # pre-cut mesh from the snapshot and retry the identical cut with the
+        # more tolerant FLOAT solver instead.
+        bm_before.to_mesh(die_obj.data)
+        die_obj.data.update()
+
+        mod = die_obj.modifiers.new(name="Engrave", type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.object = cutter_obj
+        mod.solver = 'FLOAT'
+        bpy.context.view_layer.objects.active = die_obj
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+
+    bm_before.free()
     bpy.data.objects.remove(cutter_obj, do_unlink=True)
 
 

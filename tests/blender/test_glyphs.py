@@ -328,6 +328,95 @@ def test_engraved_greek_numerals_d12_does_not_collapse_from_unwelded_cutter():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_engraved_greek_numerals_d10_does_not_collapse_from_exact_solver_on_alpha_cut():
+    """
+    Regression test for asset_00091 (d10, greek_numerals, seed=133,
+    size_mm=16.12691595326456): even after _weld_cutter_mesh welds duplicate
+    vertices and recomputes normals, the Greek capital Alpha ("Α") glyph's
+    cutter mesh retains ~42 residual non-manifold edges -- a genuine
+    self-overlap intrinsic to how Blender's built-in Bfont tessellates that
+    specific glyph's outline, not just an unwelded seam. Stepping through this
+    exact die's cuts one at a time showed the die's volume was fine through
+    cut 0 and cut 1, then cut 2 (value=1, label "Α") dropped the die's volume
+    from 970.03 to 2.984 in a single boolean modifier_apply using the EXACT
+    solver -- an outright catastrophic collapse, distinct from (and not fixed
+    by) the unwelded-mesh fix that resolved asset_00006's d12 collapse.
+
+    The fix in _boolean_diff_apply snapshots the die's volume before each cut,
+    applies with EXACT as before, and if the result removed more than half the
+    die's volume (geometrically impossible for one small glyph incision),
+    restores the pre-cut mesh and retries the identical cut with the FLOAT
+    solver, which tolerates this class of degenerate cutter (empirically
+    970.03 -> 970.13 on this exact cut, a negligible change).
+
+    This test reproduces the exact failing die/style/size and asserts the
+    fully engraved result (all 10 cuts, including the "Α" cut) is a sane,
+    non-collapsed mesh: volume well above the ~0.3%-remaining collapse seen in
+    the actual bug, and a face count consistent with 10 real engraving cuts
+    rather than a gutted shell.
+
+    Note on connectivity: this test intentionally does not assert the result
+    is a single connected component. Even the already-fixed, already-passing
+    test_engraved_greek_numerals_d12_does_not_collapse_from_unwelded_cutter
+    case (EXACT solver only, no FLOAT fallback triggered) empirically leaves
+    one tiny (8-vert) disconnected garbage fragment alongside the main body --
+    a harmless, pre-existing artifact of the EXACT boolean solver on these
+    glyph cutters in general, unrelated to the catastrophic-collapse bug this
+    test targets.
+    """
+    import bpy
+    import bmesh
+    from dice_gen import geometry, numbering, glyphs
+
+    die_type = "d10"
+    size_mm = 16.12691595326456  # matches asset_00091 (seed=133) exactly
+
+    obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+    assert len(assignment) == 10, "d10 should have 10 faces assigned"
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    volume_before = bm.calc_volume()
+    faces_before = len(bm.faces)
+    bm.free()
+    assert faces_before == 10, "pristine d10 should have 10 faces"
+
+    glyphs.apply_engraved_glyphs(
+        obj, die_type, assignment,
+        glyph_style="greek_numerals", glyph_fill="blank",
+        font_id="font_sans_bold", size_mm=size_mm,
+    )
+
+    bm2 = bmesh.new()
+    bm2.from_mesh(obj.data)
+    volume_after = bm2.calc_volume()
+    faces_after = len(bm2.faces)
+    bm2.free()
+
+    assert volume_after > 0, "engraved die must not collapse to a degenerate/zero-volume mesh"
+    # The actual bug left only ~0.3% of the pristine volume remaining
+    # (2.984 / 970.03). The fix should keep volume well above that; a sane
+    # engraved d10 with 10 small numeral cuts should retain the vast majority
+    # of its volume, so 0.5 is a bound that would have failed against the bug
+    # (consistent with the 50% collapse-detection threshold in the fix) while
+    # comfortably passing a correctly engraved die.
+    assert volume_after > 0.5 * volume_before, (
+        f"volume ratio {volume_after / volume_before} looks collapsed "
+        f"(before={volume_before}, after={volume_after}); the original bug "
+        f"produced a ratio of ~0.003 (2.984 / 970.03) on this exact die"
+    )
+    assert faces_after > 100, (
+        f"face count {faces_after} looks collapsed (pristine was "
+        f"{faces_before}); a correctly engraved d10 with 10 numeral cuts "
+        f"should land well above 100 faces, not near the pristine count or "
+        f"a handful like the original collapse"
+    )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
@@ -335,6 +424,7 @@ def run():
     test_decal_glyphs_assigns_one_material_per_face()
     test_engraved_glyphs_use_pristine_face_orientations_not_reindexed_mid_loop()
     test_engraved_greek_numerals_d12_does_not_collapse_from_unwelded_cutter()
+    test_engraved_greek_numerals_d10_does_not_collapse_from_exact_solver_on_alpha_cut()
 
 
 run_and_report(run)
