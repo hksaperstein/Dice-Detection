@@ -1,0 +1,91 @@
+"""
+Procedural shader-node materials for the 6 realistic dice finish categories.
+Node input/output socket names below (e.g. "Transmission Weight", "Factor")
+were confirmed against this project's installed Blender 5.1.2 — Blender has
+renamed several Principled BSDF and texture-node sockets across versions
+(e.g. "Transmission" -> "Transmission Weight", noise/ramp "Fac" -> "Factor").
+"""
+import colorsys
+
+import bpy
+
+MATERIAL_CATEGORIES = ["opaque", "translucent", "marbled", "glitter", "metallic", "speckled"]
+
+
+def _hsv_to_rgba(h, s, v, a=1.0):
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return (r, g, b, a)
+
+
+def build_material(die_name, category, params):
+    mat = bpy.data.materials.new(name=f"{die_name}_{category}")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    bsdf = nt.nodes["Principled BSDF"]
+
+    base_color = _hsv_to_rgba(params["hue"], params["saturation"], params["value"])
+    bsdf.inputs["Base Color"].default_value = base_color
+    bsdf.inputs["Roughness"].default_value = params["roughness"]
+
+    if category == "opaque":
+        pass
+
+    elif category == "translucent":
+        bsdf.inputs["Transmission Weight"].default_value = params.get("transmission", 0.9)
+        bsdf.inputs["IOR"].default_value = params.get("ior", 1.45)
+
+    elif category == "marbled":
+        noise = nt.nodes.new("ShaderNodeTexNoise")
+        noise.inputs["Scale"].default_value = params.get("noise_scale", 5.0)
+        ramp = nt.nodes.new("ShaderNodeValToRGB")
+        secondary = _hsv_to_rgba(params.get("secondary_hue", 0.0), params["saturation"], params["value"])
+        ramp.color_ramp.elements[0].color = base_color
+        ramp.color_ramp.elements[1].color = secondary
+        nt.links.new(noise.outputs["Factor"], ramp.inputs["Factor"])
+        nt.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
+
+    elif category == "glitter":
+        voronoi = nt.nodes.new("ShaderNodeTexVoronoi")
+        voronoi.inputs["Scale"].default_value = params.get("sparkle_density", 40.0)
+        voronoi.feature = 'DISTANCE_TO_EDGE'
+        bsdf.inputs["Metallic"].default_value = 0.6
+        nt.links.new(voronoi.outputs["Distance"], bsdf.inputs["Roughness"])
+
+    elif category == "metallic":
+        bsdf.inputs["Metallic"].default_value = 1.0
+        bsdf.inputs["Roughness"].default_value = params.get("roughness", 0.15)
+
+    elif category == "speckled":
+        noise = nt.nodes.new("ShaderNodeTexNoise")
+        noise.inputs["Scale"].default_value = params.get("speckle_density", 60.0)
+        ramp = nt.nodes.new("ShaderNodeValToRGB")
+        ramp.color_ramp.elements[0].position = 0.45
+        ramp.color_ramp.elements[1].position = 0.55
+        secondary = _hsv_to_rgba(params.get("secondary_hue", 0.0), params["saturation"], params["value"])
+        ramp.color_ramp.elements[0].color = base_color
+        ramp.color_ramp.elements[1].color = secondary
+        nt.links.new(noise.outputs["Factor"], ramp.inputs["Factor"])
+        nt.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
+
+    else:
+        raise ValueError(f"unknown material category: {category!r}")
+
+    return mat
+
+
+def apply_material(die_obj, mat, slot_index=0):
+    if len(die_obj.data.materials) <= slot_index:
+        die_obj.data.materials.append(mat)
+    else:
+        die_obj.data.materials[slot_index] = mat
+
+
+def build_fill_material(die_name, params):
+    """Plain-color material for painted glyph fill (material slot 1)."""
+    fill_hue = (params["hue"] + 0.5) % 1.0
+    mat = bpy.data.materials.new(name=f"{die_name}_fill")
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes["Principled BSDF"]
+    bsdf.inputs["Base Color"].default_value = _hsv_to_rgba(fill_hue, 0.8, 0.9)
+    bsdf.inputs["Roughness"].default_value = 0.4
+    return mat
