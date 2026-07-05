@@ -50,9 +50,17 @@ def _render_thumbnail(die_obj, thumb_path, size_mm, resolution=512):
     scene.render.film_transparent = True
 
     cam_data = bpy.data.cameras.new(f"{die_obj.name}_cam")
+    # Widen the field of view (default lens is 50mm) so the die comfortably
+    # fits the frame even at the generous distance below.
+    cam_data.lens = 35
     cam_obj = bpy.data.objects.new(f"{die_obj.name}_cam", cam_data)
     bpy.context.collection.objects.link(cam_obj)
-    dist = size_mm * 0.12
+    # The die's own vertices extend up to roughly size_mm in radius from the
+    # origin (e.g. a d20's base vertices reach ~0.95 * size_mm). Placing the
+    # camera at (dist, -dist, dist) puts it sqrt(3) * dist from the origin,
+    # so dist must be well above size_mm to sit clearly outside the die's
+    # geometry with headroom to frame the whole object.
+    dist = size_mm * 2.2
     cam_obj.location = (dist, -dist, dist)
     direction = die_obj.location - cam_obj.location
     cam_obj.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
@@ -69,3 +77,5 @@ def _render_thumbnail(die_obj, thumb_path, size_mm, resolution=512):
 
     bpy.data.objects.remove(cam_obj, do_unlink=True)
     bpy.data.objects.remove(light_obj, do_unlink=True)
+    bpy.data.cameras.remove(cam_data)
+    bpy.data.lights.remove(light_data)
