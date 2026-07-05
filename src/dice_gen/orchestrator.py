@@ -1,0 +1,83 @@
+import json
+import os
+import traceback
+
+from . import exporter, geometry, glyphs, materials, numbering, sampler
+
+
+def generate_batch(count, seed, outdir):
+    os.makedirs(outdir, exist_ok=True)
+    master_manifest = []
+    failures = []
+
+    for i in range(count):
+        variant_seed = seed + i
+        asset_id = f"asset_{i:05d}"
+        try:
+            record = _generate_one(asset_id, variant_seed, outdir)
+            master_manifest.append(record)
+        except Exception as e:
+            failures.append({
+                "asset_id": asset_id,
+                "seed": variant_seed,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+            })
+
+    with open(os.path.join(outdir, "manifest.json"), "w") as f:
+        json.dump(master_manifest, f, indent=2)
+    with open(os.path.join(outdir, "failures.json"), "w") as f:
+        json.dump(failures, f, indent=2)
+
+    return len(master_manifest), len(failures)
+
+
+def _generate_one(asset_id, seed, outdir):
+    import bpy
+
+    params = sampler.sample_variant(seed)
+    die_obj = geometry.build_die_base_mesh(params.die_type, params.size_mm)
+
+    face_pairs = geometry.compute_opposite_face_pairs(die_obj)
+    assignment = numbering.assign_values_to_opposite_pairs(params.die_type, face_pairs)
+    if not numbering.verify_opposite_sum(params.die_type, face_pairs, assignment):
+        raise ValueError(f"{asset_id}: numbering invariant failed for {params.die_type}")
+
+    if params.glyph_method == "engraved":
+        glyphs.apply_engraved_glyphs(
+            die_obj, params.die_type, assignment, params.glyph_style,
+            params.glyph_fill, params.font_or_style_id, params.size_mm,
+        )
+        mat = materials.build_material(die_obj.name, params.material_category, params.material_params)
+        materials.apply_material(die_obj, mat, slot_index=0)
+        if params.glyph_fill == "painted":
+            fill_mat = materials.build_fill_material(die_obj.name, params.material_params)
+            materials.apply_material(die_obj, fill_mat, slot_index=1)
+    else:
+        mat = materials.build_material(die_obj.name, params.material_category, params.material_params)
+        materials.apply_material(die_obj, mat, slot_index=0)
+        glyphs.apply_decal_glyphs(
+            die_obj, params.die_type, assignment, params.glyph_style,
+            params.font_or_style_id, params.size_mm, outdir,
+        )
+
+    manifest_record = {
+        "asset_id": asset_id,
+        "die_type": params.die_type,
+        "num_sides": len(numbering.get_values(params.die_type)),
+        "size_mm": params.size_mm,
+        "bevel_fraction": params.bevel_fraction,
+        "numbering_scheme": params.numbering_scheme,
+        "glyph_style": params.glyph_style,
+        "glyph_method": params.glyph_method,
+        "glyph_fill": params.glyph_fill,
+        "font_or_style_id": params.font_or_style_id,
+        "material_category": params.material_category,
+        "material_params": params.material_params,
+        "seed": seed,
+    }
+
+    exporter.export_asset(die_obj, manifest_record, outdir, params.bevel_fraction, params.size_mm)
+
+    bpy.data.objects.remove(die_obj, do_unlink=True)
+    return manifest_record
