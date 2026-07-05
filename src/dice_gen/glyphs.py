@@ -67,6 +67,28 @@ def _face_orientation_matrix(face, obj_matrix):
     return rot
 
 
+def _weld_cutter_mesh(obj):
+    """
+    bpy.ops.object.convert(target='MESH') on an extruded text curve produces
+    a mesh with duplicate, unwelded vertices at every seam between the front
+    cap, back cap, and extrusion walls (confirmed empirically across every
+    glyph style: Latin, Roman, Greek, digits). Feeding this un-welded,
+    non-watertight cutter into _boolean_diff_apply's EXACT boolean solver
+    usually gets away with it, but can occasionally corrupt the target mesh
+    catastrophically (e.g. causing polygon count to drop instead of grow
+    after a cut). Welding duplicate vertices and recomputing normals before
+    the boolean fixes this. The pip-sphere cutter branch doesn't need this:
+    UV spheres from primitive_uv_sphere_add are already watertight/manifold.
+    """
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(obj.data)
+    obj.data.update()
+    bm.free()
+
+
 def _boolean_diff_apply(die_obj, cutter_obj):
     mod = die_obj.modifiers.new(name="Engrave", type='BOOLEAN')
     mod.operation = 'DIFFERENCE'
@@ -115,6 +137,7 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
             txt_obj.data.extrude = depth
             bpy.context.view_layer.objects.active = txt_obj
             bpy.ops.object.convert(target='MESH')
+            _weld_cutter_mesh(txt_obj)
             txt_obj.matrix_world = orient @ Matrix.Translation((0, 0, -depth))
             _boolean_diff_apply(die_obj, txt_obj)
 

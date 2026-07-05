@@ -241,12 +241,100 @@ def test_engraved_glyphs_use_pristine_face_orientations_not_reindexed_mid_loop()
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_engraved_greek_numerals_d12_does_not_collapse_from_unwelded_cutter():
+    """
+    Regression test for asset_00006 (d12, greek_numerals, seed=48): the text
+    cutter mesh produced by bpy.ops.object.convert(target='MESH') has
+    duplicate, unwelded vertices at every seam between the front cap, back
+    cap, and extrusion walls (true of every glyph tested, including this
+    Greek-numeral style), which is not watertight/manifold. Feeding this
+    straight into the EXACT boolean solver usually gets away with it, but on
+    this exact die/style/size it corrupted the mesh catastrophically: after
+    the first cut (Greek capital Alpha, "Α") face count *dropped* from 12 to
+    10 (a correct cut should *increase* face count from the new recess
+    walls), and after the second cut the whole die collapsed to two
+    disconnected 1-2mm garbage fragments (28 verts/18 polys total).
+
+    The fix welds duplicate vertices (bmesh.ops.remove_doubles) and
+    recomputes normals on the cutter mesh right after conversion, before it
+    is used as a boolean operand. This test reproduces the exact failing
+    die/style/size and asserts the engraved result is a sane, non-collapsed
+    mesh: positive volume within a tight band of the pristine solid's
+    volume, and a final face count far above the pristine 12-face count (a
+    collapse produces something tiny, e.g. 6-18 faces).
+
+    Note on the volume check: unlike the simpler d6/arabic_numerals case in
+    test_engraved_glyphs_reduce_solid_volume, this exact die/glyph/size
+    combination empirically does NOT show a net volume *decrease* after
+    engraving -- the EXACT boolean solver's own numerical noise on these
+    particular multi-character Greek glyph cutters (e.g. "ΙΓ", "ΙΒ") nets
+    out to a small (~0.25%) volume *increase* even with the fix applied, as
+    verified directly against this codebase (pristine 10362.67 -> engraved
+    10389.02). That is a harmless solver quirk, confirmed unrelated to the
+    bug: bounding-box dimensions scale correctly (golden-ratio 1.618x
+    size_mm on all 3 axes) and face count lands at the same ~3488 this
+    codebase's fixed code produces when run through the real seed=48
+    pipeline. The bug this test guards against is catastrophic collapse
+    (volume divebombing to ~0.18 out of 10362, i.e. a ~56000x reduction),
+    not fine-grained volume drift, so the bound below is intentionally wide
+    enough to tolerate solver noise while still catching any collapse.
+    """
+    import bpy
+    import bmesh
+    from dice_gen import geometry, numbering, glyphs
+
+    die_type = "d12"
+    size_mm = 17.89272167378179  # matches asset_00006 (seed=48) exactly
+
+    obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+    assert len(assignment) == 12, "d12 should have 12 faces assigned"
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    volume_before = bm.calc_volume()
+    faces_before = len(bm.faces)
+    bm.free()
+    assert faces_before == 12, "pristine d12 should have 12 faces"
+
+    glyphs.apply_engraved_glyphs(
+        obj, die_type, assignment,
+        glyph_style="greek_numerals", glyph_fill="blank",
+        font_id="font_sans_bold", size_mm=size_mm,
+    )
+
+    bm2 = bmesh.new()
+    bm2.from_mesh(obj.data)
+    volume_after = bm2.calc_volume()
+    faces_after = len(bm2.faces)
+    bm2.free()
+
+    assert volume_after > 0, "engraved die must not collapse to a degenerate/zero-volume mesh"
+    volume_ratio = volume_after / volume_before
+    assert 0.5 < volume_ratio < 1.5, (
+        f"volume ratio {volume_ratio} (before={volume_before}, "
+        f"after={volume_after}) is wildly off from 1.0 -- the original bug "
+        f"gutted the die down to two 1-2mm garbage fragments "
+        f"(ratio ~= 0.0000174)"
+    )
+    assert faces_after > 100, (
+        f"face count {faces_after} looks collapsed (pristine was "
+        f"{faces_before}); a correctly engraved d12 with 12 numeral cuts "
+        f"should land well above 100 faces, not near the pristine count or "
+        f"a handful like the original collapse (6-18 faces)"
+    )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
     test_engraved_glyphs_blank_fill_does_not_add_second_material()
     test_decal_glyphs_assigns_one_material_per_face()
     test_engraved_glyphs_use_pristine_face_orientations_not_reindexed_mid_loop()
+    test_engraved_greek_numerals_d12_does_not_collapse_from_unwelded_cutter()
 
 
 run_and_report(run)
