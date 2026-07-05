@@ -177,6 +177,7 @@ def _render_label_to_image(value, glyph_style, image_path, resolution=256):
     light_obj.location = (0, 0, 3)
     scene.collection.objects.link(light_obj)
 
+    glyph_objs = []
     if glyph_style == "pips":
         for (ox, oy) in PIP_VALUE_LAYOUTS.get(value, [(0, 0)]):
             bpy.ops.mesh.primitive_circle_add(
@@ -185,6 +186,7 @@ def _render_label_to_image(value, glyph_style, image_path, resolution=256):
             dot = bpy.context.active_object
             bpy.context.collection.objects.unlink(dot)
             scene.collection.objects.link(dot)
+            glyph_objs.append(dot)
     else:
         label = glyph_label(value, glyph_style)
         bpy.ops.object.text_add(location=(0, 0, 0))
@@ -195,11 +197,28 @@ def _render_label_to_image(value, glyph_style, image_path, resolution=256):
         txt_obj.data.size = 1.0
         bpy.context.collection.objects.unlink(txt_obj)
         scene.collection.objects.link(txt_obj)
+        glyph_objs.append(txt_obj)
 
     scene.render.filepath = image_path
     prev_scene = bpy.context.window.scene
     bpy.context.window.scene = scene
     bpy.ops.render.render(write_still=True)
     bpy.context.window.scene = prev_scene
+
+    for glyph_obj in glyph_objs:
+        glyph_data = glyph_obj.data
+        bpy.data.objects.remove(glyph_obj, do_unlink=True)
+        if glyph_data is None or glyph_data.users > 0:
+            continue
+        if isinstance(glyph_data, bpy.types.Mesh):
+            bpy.data.meshes.remove(glyph_data)
+        elif isinstance(glyph_data, bpy.types.Curve):
+            bpy.data.curves.remove(glyph_data)
+
+    bpy.data.objects.remove(cam_obj, do_unlink=True)
+    bpy.data.cameras.remove(cam_data)
+
+    bpy.data.objects.remove(light_obj, do_unlink=True)
+    bpy.data.lights.remove(light_data)
 
     bpy.data.scenes.remove(scene)

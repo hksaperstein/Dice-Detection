@@ -48,6 +48,28 @@ def test_engraved_glyphs_reduce_solid_volume():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_engraved_glyphs_blank_fill_does_not_add_second_material():
+    import bpy
+    from dice_gen import geometry, numbering, glyphs
+
+    die_type = "d6"
+    obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+
+    glyphs.apply_engraved_glyphs(
+        obj, die_type, assignment,
+        glyph_style="arabic_numerals", glyph_fill="blank",
+        font_id="font_sans_bold", size_mm=16.0,
+    )
+
+    assert len(obj.data.materials) < 2, (
+        "blank fill should not add a second (painted fill) material slot"
+    )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def test_decal_glyphs_assigns_one_material_per_face():
     import bpy
     from dice_gen import geometry, numbering, glyphs
@@ -74,6 +96,7 @@ def test_decal_glyphs_assigns_one_material_per_face():
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
+    test_engraved_glyphs_blank_fill_does_not_add_second_material()
     test_decal_glyphs_assigns_one_material_per_face()
 
 
