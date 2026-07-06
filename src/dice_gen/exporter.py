@@ -1,6 +1,7 @@
 """
-Bakes the non-destructive edge bevel, exports the die as USD, renders a
-thumbnail for visual spot-checking, and writes the per-asset JSON manifest.
+Bakes the non-destructive edge bevel, exports the die as USD/STL/blend,
+renders a thumbnail for visual spot-checking, and writes the per-asset JSON
+manifest.
 
 Bevel uses limit_method='ANGLE' (not 'NONE') so it only rounds the die's
 structural edges (e.g. a cube's ~90 degree edges) while leaving shallow
@@ -24,22 +25,69 @@ def export_asset(die_obj, manifest_record, outdir, bevel_fraction, size_mm):
     bpy.context.view_layer.objects.active = die_obj
     bpy.ops.object.modifier_apply(modifier=mod.name)
 
-    usd_path = os.path.join(outdir, f"{asset_id}.usd")
     bpy.ops.object.select_all(action='DESELECT')
     die_obj.select_set(True)
     bpy.context.view_layer.objects.active = die_obj
+
+    usd_path = os.path.join(outdir, f"{asset_id}.usd")
     bpy.ops.wm.usd_export(filepath=usd_path, selected_objects_only=True)
+
+    stl_path = os.path.join(outdir, f"{asset_id}.stl")
+    bpy.ops.wm.stl_export(filepath=stl_path, export_selected_objects=True)
+
+    blend_path = os.path.join(outdir, f"{asset_id}.blend")
+    _save_blend_copy(blend_path)
 
     thumb_path = os.path.join(outdir, f"{asset_id}_thumb.png")
     _render_thumbnail(die_obj, thumb_path, size_mm)
 
     manifest_record["usd_path"] = f"{asset_id}.usd"
+    manifest_record["stl_path"] = f"{asset_id}.stl"
+    manifest_record["blend_path"] = f"{asset_id}.blend"
     manifest_record["thumbnail_path"] = f"{asset_id}_thumb.png"
     manifest_path = os.path.join(outdir, f"{asset_id}.json")
     with open(manifest_path, "w") as f:
         json.dump(manifest_record, f, indent=2)
 
     return manifest_path
+
+
+def _save_blend_copy(blend_path):
+    """
+    Saves the current .blend state as a standalone copy the user can open
+    directly in Blender. Two things have to be handled explicitly here that
+    usd_export/stl_export don't need to worry about, since save_as_mainfile
+    has no "selected objects only" option -- it always saves Blender's
+    entire current file:
+
+    1. Blender's own default-startup scene (present in every
+       `blender --background --python ...` session that doesn't load an
+       explicit .blend file) links a "Cube", "Light", and "Camera" object
+       into the scene. Nothing in this pipeline uses them, but they'd
+       otherwise silently end up saved into every single asset's .blend
+       alongside the actual die.
+    2. This function runs once per asset inside one long-running batch
+       session (see orchestrator.generate_batch/generate_set_batch). Each
+       previous asset's die object is removed via
+       bpy.data.objects.remove(..., do_unlink=True) at the end of its own
+       iteration, which unlinks it from the scene but leaves its
+       mesh/material/image data-blocks resident in bpy.data with zero
+       users. Without purging these first, every later asset's saved
+       .blend would accumulate every earlier asset's orphaned data too
+       (confirmed empirically: mesh/material counts and file size grew on
+       every iteration of a save loop without this purge, and stayed flat
+       once it was added).
+
+    copy=True is required so saving this per-asset .blend never changes
+    the long-running batch session's own "current file" identity.
+    """
+    for name in ("Cube", "Light", "Camera"):
+        stray = bpy.data.objects.get(name)
+        if stray is not None:
+            bpy.data.objects.remove(stray, do_unlink=True)
+
+    bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+    bpy.ops.wm.save_as_mainfile(filepath=blend_path, copy=True, check_existing=False)
 
 
 def _render_thumbnail(die_obj, thumb_path, size_mm, resolution=512):
