@@ -38,6 +38,9 @@ def validate(outdir):
                 f"{expected_sides} for {die_type}"
             )
 
+        for warning in record.get("engraving_warnings") or []:
+            errors.append(f"{asset_id}: {warning}")
+
     sets = defaultdict(list)
     for record in manifest:
         set_id = record.get("set_id")

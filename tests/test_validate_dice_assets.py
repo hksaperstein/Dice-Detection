@@ -38,6 +38,36 @@ def test_validate_reports_wrong_num_sides():
         assert any("num_sides" in e for e in errors)
 
 
+def test_validate_flags_non_empty_engraving_warnings(tmp_path):
+    _write_manifest(tmp_path, [{
+        "asset_id": "a1", "die_type": "d6", "num_sides": 6,
+        "usd_path": "a1.usd", "thumbnail_path": "a1_thumb.png",
+        "engraving_warnings": [
+            "a1_d6_die: a glyph cut was skipped entirely -- both EXACT and "
+            "FLOAT solvers produced a collapsed or debris-laden result for "
+            "this cutter; this die is missing one numeral/pip as a result."
+        ],
+    }])
+    open(os.path.join(tmp_path, "a1.usd"), "w").write("x")
+    open(os.path.join(tmp_path, "a1_thumb.png"), "w").close()
+
+    errors = validate(str(tmp_path))
+    assert any("a1" in e and "glyph cut was skipped" in e for e in errors), errors
+
+
+def test_validate_does_not_flag_empty_engraving_warnings(tmp_path):
+    _write_manifest(tmp_path, [{
+        "asset_id": "a1", "die_type": "d6", "num_sides": 6,
+        "usd_path": "a1.usd", "thumbnail_path": "a1_thumb.png",
+        "engraving_warnings": [],
+    }])
+    open(os.path.join(tmp_path, "a1.usd"), "w").write("x")
+    open(os.path.join(tmp_path, "a1_thumb.png"), "w").close()
+
+    errors = validate(str(tmp_path))
+    assert errors == []
+
+
 def test_validate_passes_for_well_formed_manifest():
     import tempfile
     with tempfile.TemporaryDirectory() as tmp_path:
