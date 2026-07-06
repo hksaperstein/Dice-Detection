@@ -93,7 +93,7 @@ def test_export_asset_blend_files_do_not_accumulate_across_multiple_exports():
     every iteration of a throwaway repro loop; purging before each save
     kept both flat). This test exports two different dice in the same
     session and asserts each one's saved .blend contains only its own
-    object, not the other's.
+    object/mesh/material data, not the other's.
     """
     import bpy
     from dice_gen import geometry, materials, exporter
@@ -102,6 +102,8 @@ def test_export_asset_blend_files_do_not_accumulate_across_multiple_exports():
     mat1 = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
     materials.apply_material(obj1, mat1)
     obj1_name = obj1.name
+    mesh1_name = obj1.data.name
+    mat1_name = mat1.name
 
     with tempfile.TemporaryDirectory() as outdir:
         record1 = {"asset_id": "test_first", "die_type": "d6"}
@@ -112,6 +114,8 @@ def test_export_asset_blend_files_do_not_accumulate_across_multiple_exports():
         mat2 = materials.build_material("d4", "opaque", {"hue": 0.6, "saturation": 0.5, "value": 0.5, "roughness": 0.3})
         materials.apply_material(obj2, mat2)
         obj2_name = obj2.name
+        mesh2_name = obj2.data.name
+        mat2_name = mat2.name
 
         record2 = {"asset_id": "test_second", "die_type": "d4"}
         exporter.export_asset(obj2, record2, outdir, bevel_fraction=0.04, size_mm=14.0)
@@ -121,8 +125,12 @@ def test_export_asset_blend_files_do_not_accumulate_across_multiple_exports():
 
         with bpy.data.libraries.load(blend1_path) as (data_from, _data_to):
             objects_in_first = list(data_from.objects)
+            meshes_in_first = list(data_from.meshes)
+            materials_in_first = list(data_from.materials)
         with bpy.data.libraries.load(blend2_path) as (data_from, _data_to):
             objects_in_second = list(data_from.objects)
+            meshes_in_second = list(data_from.meshes)
+            materials_in_second = list(data_from.materials)
 
         assert objects_in_first == [obj1_name], (
             f"the first asset's .blend should contain only its own die "
@@ -134,6 +142,39 @@ def test_export_asset_blend_files_do_not_accumulate_across_multiple_exports():
             f"the second asset's .blend should contain only its own die "
             f"({obj2_name!r}), not any orphaned data left over from the "
             f"first asset, got {objects_in_second}"
+        )
+
+        # Mesh data for the first asset
+        assert meshes_in_first == [mesh1_name], (
+            f"the first asset's .blend should contain only its own mesh data "
+            f"({mesh1_name!r}), got {meshes_in_first}"
+        )
+        # Material data for the first asset
+        assert materials_in_first == [mat1_name], (
+            f"the first asset's .blend should contain only its own material "
+            f"({mat1_name!r}), got {materials_in_first}"
+        )
+
+        # Mesh data for the second asset must not include the first die's mesh
+        assert mesh1_name not in meshes_in_second, (
+            f"the second asset's .blend should NOT contain the first asset's mesh "
+            f"({mesh1_name!r}), which would indicate orphaned data accumulation; "
+            f"got meshes: {meshes_in_second}"
+        )
+        assert meshes_in_second == [mesh2_name], (
+            f"the second asset's .blend should contain only its own mesh data "
+            f"({mesh2_name!r}), got {meshes_in_second}"
+        )
+
+        # Material data for the second asset must not include the first die's material
+        assert mat1_name not in materials_in_second, (
+            f"the second asset's .blend should NOT contain the first asset's material "
+            f"({mat1_name!r}), which would indicate orphaned data accumulation; "
+            f"got materials: {materials_in_second}"
+        )
+        assert materials_in_second == [mat2_name], (
+            f"the second asset's .blend should contain only its own material "
+            f"({mat2_name!r}), got {materials_in_second}"
         )
 
         bpy.data.objects.remove(obj2, do_unlink=True)
