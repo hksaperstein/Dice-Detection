@@ -89,34 +89,131 @@ def _weld_cutter_mesh(obj):
     bm.free()
 
 
-def _largest_component_face_count(bm):
+def _connected_components(bm):
     """
-    Size (in faces) of the largest connected shell in a bmesh. Used to detect
-    when a boolean cut silently failed to engage the die's body at all (see
-    _boolean_diff_apply): a genuine engrave cut always adds at least a few
-    wall/floor faces to whatever it touches, so the largest connected shell's
-    face count must strictly grow after a successful cut.
+    Splits a bmesh into its connected shells. Each shell is reported as a
+    dict with:
+      - "faces": the BMFace list making up the shell
+      - "has_boundary": True if any edge in the shell is non-manifold (i.e.
+        this is an open surface, not a closed solid) -- e.g. a recessed cut
+        surface that got stitched from an unwelded-but-coincident seam
+        (confirmed harmless on asset_00091, see _boolean_diff_apply)
+      - "bbox_diag_sq": squared world-space bounding-box diagonal of the
+        shell's vertices -- large for the die's own body (spans close to the
+        die's full envelope), tiny for un-subtracted glyph-cutter debris
+        (a few mm, matching individual glyph size) regardless of face count
+
+    Shared by _non_body_closed_component_count (detects un-subtracted cutter
+    debris after a boolean cut) and the end-of-loop debris-discarding
+    backstop in apply_engraved_glyphs (picks which closed shell is the real
+    body to keep).
     """
     bm.faces.ensure_lookup_table()
     visited = set()
-    best = 0
+    components = []
     for f in bm.faces:
         if f.index in visited:
             continue
-        count = 0
         stack = [f]
+        comp_faces = []
+        has_boundary = False
         while stack:
             cur = stack.pop()
             if cur.index in visited:
                 continue
             visited.add(cur.index)
-            count += 1
+            comp_faces.append(cur)
             for e in cur.edges:
+                if not e.is_manifold:
+                    has_boundary = True
                 for lf in e.link_faces:
                     if lf.index not in visited:
                         stack.append(lf)
-        best = max(best, count)
-    return best
+        verts = {v for fc in comp_faces for v in fc.verts}
+        xs = [v.co.x for v in verts]
+        ys = [v.co.y for v in verts]
+        zs = [v.co.z for v in verts]
+        diag_sq = (max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2 + (max(zs) - min(zs)) ** 2
+        components.append({
+            "faces": comp_faces,
+            "has_boundary": has_boundary,
+            "bbox_diag_sq": diag_sq,
+        })
+    return components
+
+
+def _non_body_closed_component_count(bm):
+    """
+    Number of closed (zero-boundary-edge) shells in the mesh, EXCLUDING
+    whichever single component has the largest bounding-box diagonal (assumed
+    to be the die's own body). This exclusion matters because, empirically,
+    across every asset inspected during this investigation, the die's own
+    body is essentially never itself fully closed after a cut -- even
+    accepted-correct results like asset_00091 have boundary edges on the
+    body/recessed-surface component. So counting ALL closed shells and
+    expecting the body to be one of them (an earlier version of this check)
+    doesn't work: a single un-subtracted debris blob is itself closed, and
+    with the (open) body excluded from consideration entirely, that's
+    "1 closed shell" whether zero or one debris blobs are present --
+    indistinguishable, and the check can never fire. Excluding the
+    largest-bbox-diagonal component (whatever its own manifoldness) up front
+    fixes this: any closed shell that remains after that exclusion is, by
+    definition, not the body, so it can only be un-subtracted glyph-cutter
+    debris.
+    """
+    components = _connected_components(bm)
+    if not components:
+        return 0
+    body = max(components, key=lambda c: c["bbox_diag_sq"])
+    return sum(1 for c in components if c is not body and not c["has_boundary"])
+
+
+def _discard_non_body_closed_debris(die_obj):
+    """
+    Final backstop, run ONCE after the entire cut loop in apply_engraved_glyphs
+    finishes (not per-cut -- no need to re-scan/delete mid-loop when every cut
+    already got its own EXACT->FLOAT retry chance via _boolean_diff_apply).
+    Even that per-cut retry is not guaranteed to fully merge every glyph
+    cutter into the die on every degenerate input -- four rounds of
+    progressively subtler EXACT-solver pathologies have been found
+    empirically on this codebase (afb1af5's Alpha-glyph volume collapse,
+    cd7b268's total silent no-op, the debris-outweighs-body face-count
+    masking, and the closed-component-count/absolute-threshold blind spot --
+    see _boolean_diff_apply and _non_body_closed_component_count for the
+    full history). Rather than assume this is finally the last one,
+    guarantee the SHIPPED asset is always clean: delete any remaining closed
+    shell other than the largest-bbox-diagonal one (the real body; any other
+    OPEN pieces, e.g. asset_00091-style harmless seam splits, are left
+    alone), so no exported asset ever contains stray un-subtracted cutter
+    geometry. This can leave a single numeral missing from one face in the
+    rare worst case, which is a far smaller defect than shipping floating
+    garbage polygons in training data, and it is surfaced via a printed
+    warning rather than silently swallowed.
+    """
+    bm = bmesh.new()
+    bm.from_mesh(die_obj.data)
+    components = _connected_components(bm)
+
+    if components:
+        body = max(components, key=lambda c: c["bbox_diag_sq"])
+        debris = [c for c in components if c is not body and not c["has_boundary"]]
+
+        if debris:
+            debris_face_count = sum(len(c["faces"]) for c in debris)
+            for extra in debris:
+                bmesh.ops.delete(bm, geom=extra["faces"], context='FACES')
+            bm.to_mesh(die_obj.data)
+            die_obj.data.update()
+            print(
+                f"WARNING: {die_obj.name}: {len(debris)} un-subtracted "
+                f"closed debris shell(s) ({debris_face_count} faces total) "
+                f"survived every per-cut EXACT->FLOAT retry and were "
+                f"discarded at the end of the cut loop to keep the shipped "
+                f"asset clean; this likely means at least one numeral/pip "
+                f"cut failed to engrave on this die."
+            )
+
+    bm.free()
 
 
 def _boolean_diff_apply(die_obj, cutter_obj):
@@ -142,16 +239,73 @@ def _boolean_diff_apply(die_obj, cutter_obj):
     merely appended alongside it as an inert, un-subtracted floating solid.
     Because nothing was actually subtracted, the die's volume barely changed
     per cut, so this never tripped the volume-collapse check above; the die
-    just silently ended up completely unengraved. This is instead caught by
-    tracking the largest connected shell's face count: a real cut always
-    grows the body it touches by at least a few wall/floor faces, so if the
-    largest shell's face count fails to increase at all, EXACT has produced
-    a no-op and we fall back to FLOAT exactly as in the collapse case.
+    just silently ended up completely unengraved.
+
+    A third failure mode was found on 4 assets in a 100-asset batch
+    (asset_00079, asset_00095, asset_00098, asset_00004; all d4/
+    arabic_numerals): an earlier fix for the asset_00026 no-op tracked
+    whichever connected shell had the most faces, on the theory that a real
+    cut always grows the body it touches. This is fooled on low-poly dice (a
+    d4 starts at only 4 faces, a d6 at 6, etc.) early in a multi-cut
+    sequence: if EXACT silently no-ops a cut, the untouched cutter mesh --
+    which can easily have hundreds of faces for a single glyph -- gets
+    appended as a new component with MORE faces than the real body has
+    accumulated so far, so "the largest component grew" looked true even
+    though it was debris masquerading as growth, not real engraving. Worse,
+    even after correctly identifying the body by world-space bounding-box
+    diagonal instead of raw face count (debris is always physically tiny --
+    a few mm, matching individual glyph size -- while the real body's
+    bounding box always spans close to the die's full envelope), a bare
+    body-face-count-growth check still isn't sufficient: on asset_00079,
+    EXACT left 3 of 4 numeral cuts as fully disconnected debris blobs (263,
+    437, and 45 faces) while incidentally grazing the real body for a single
+    stray face each time (13->14->15->16), so "the body grew" remained
+    trivially true even though the numerals were never actually engraved.
+
+    A fourth iteration replaced the growth heuristic with a structural check
+    instead: a genuinely successful cut merges the cutter into the die,
+    leaving at most one closed (fully watertight, zero-boundary-edge) shell
+    in the result, so a count of closed shells greater than one meant
+    un-subtracted debris. This was ALSO insufficient, for a subtler reason:
+    empirically, the die's own body is essentially never itself fully closed
+    after a cut (confirmed even in the accepted-correct asset_00091 result),
+    so a lone debris blob (which IS closed) coexisting with the (open) body
+    always presented as exactly "1 closed shell" -- bitwise indistinguishable
+    from the "0 debris" case, since the body was never being counted as the
+    permitted one anyway. The absolute-count check could therefore only ever
+    fire when 2+ debris blobs coexisted simultaneously, and even then it only
+    retried the *current* cut, letting older debris (like asset_00079's
+    263-face "2" blob) ride through every subsequent snapshot/retry cycle
+    untouched.
+
+    The fix that actually closes this gap asks a per-cut DELTA question
+    instead of an absolute count: did *this specific cut* create a new
+    closed shell that wasn't there before it ran, excluding whichever single
+    component has the largest bounding-box diagonal (assumed to be the die's
+    own body, regardless of whether that component itself is open or
+    closed -- see _non_body_closed_component_count)? This is well-defined
+    regardless of how much old debris already exists, correctly fires on the
+    exact cut that produced new debris, and doesn't get confused by (or
+    endlessly re-retry because of) debris already carried over from an
+    earlier cut. It also doesn't false-trigger on asset_00091-style harmless
+    open-boundary splits, since those never count as closed on either side of
+    the comparison.
+
+    Even the EXACT->FLOAT retry driven by this check is not guaranteed to
+    fully merge every cutter on every degenerate input -- Blender's boolean
+    solvers simply aren't perfectly reliable across four rounds of
+    progressively subtler pathologies found on this codebase. So as a final
+    backstop, apply_engraved_glyphs runs a one-time cleanup ONCE after the
+    entire cut loop finishes (not per-cut -- see apply_engraved_glyphs):
+    any non-body closed shell still present at that point is discarded and a
+    warning is printed, guaranteeing no shipped asset ever contains stray
+    un-subtracted cutter geometry, at worst a missing numeral rather than
+    floating garbage polygons in the training data.
     """
     bm_before = bmesh.new()
     bm_before.from_mesh(die_obj.data)
     volume_before = bm_before.calc_volume()
-    largest_component_before = _largest_component_face_count(bm_before)
+    debris_before = _non_body_closed_component_count(bm_before)
 
     mod = die_obj.modifiers.new(name="Engrave", type='BOOLEAN')
     mod.operation = 'DIFFERENCE'
@@ -163,19 +317,19 @@ def _boolean_diff_apply(die_obj, cutter_obj):
     bm_after = bmesh.new()
     bm_after.from_mesh(die_obj.data)
     volume_after = bm_after.calc_volume()
-    largest_component_after = _largest_component_face_count(bm_after)
+    debris_after = _non_body_closed_component_count(bm_after)
     bm_after.free()
 
     needs_retry = (
         (volume_before > 0 and volume_after < volume_before * 0.5)
-        or (largest_component_after <= largest_component_before)
+        or (debris_after > debris_before)
     )
 
     if needs_retry:
-        # EXACT produced a degenerate/collapsed result, or silently no-op'd
-        # without engaging the die's body at all -- restore the die's
-        # pre-cut mesh from the snapshot and retry the identical cut with the
-        # more tolerant FLOAT solver instead.
+        # EXACT produced a degenerate/collapsed result, or this specific cut
+        # left new un-subtracted debris behind -- restore the die's pre-cut
+        # mesh from the snapshot and retry the identical cut with the more
+        # tolerant FLOAT solver instead.
         bm_before.to_mesh(die_obj.data)
         die_obj.data.update()
 
@@ -231,6 +385,12 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
             _weld_cutter_mesh(txt_obj)
             txt_obj.matrix_world = orient @ Matrix.Translation((0, 0, -depth))
             _boolean_diff_apply(die_obj, txt_obj)
+
+    # Final backstop, run once after every cut has had its own per-cut retry
+    # chance: discard any un-subtracted closed debris shell still left over
+    # (see _discard_non_body_closed_debris) so the shipped die is guaranteed
+    # free of stray cutter geometry.
+    _discard_non_body_closed_debris(die_obj)
 
     if glyph_fill == "painted":
         _assign_fill_material_to_recessed_faces(die_obj)

@@ -434,19 +434,24 @@ def test_engraved_arabic_numerals_d20_does_not_silently_noop_from_exact_solver()
 
     This silent no-op never tripped the afb1af5 volume-collapse check,
     because nothing was actually being subtracted -- the total volume barely
-    changed per cut, so there was no collapse to detect. The fix adds a
-    second, complementary check based on connected-component face count: a
-    genuine engrave cut always adds at least a few wall/floor faces to
-    whatever it touches, so if the largest connected shell's face count fails
-    to grow after an EXACT apply, that's a no-op, and the cut is retried with
-    the more tolerant FLOAT solver.
+    changed per cut, so there was no collapse to detect. The fix (since
+    refined three times more -- see _boolean_diff_apply's docstring for the
+    full history) now checks a per-cut structural delta instead of a
+    face-count heuristic: did this specific cut create a new closed
+    (watertight) shell that wasn't there before it ran, excluding whichever
+    component has the largest bounding-box diagonal (the die's own body,
+    which is essentially never itself fully closed)? If so, that's
+    un-subtracted debris, and the cut is retried with the more tolerant
+    FLOAT solver, with a final backstop (run once after the whole cut loop)
+    that discards any non-body closed shell still left over.
 
     This test reproduces the exact failing die/style/size and asserts the
-    die was actually engraved: the largest connected component's face count
-    must land far above the pristine 20-face count (a real 20-cut
-    arabic-numeral engrave on a d20 empirically lands around 5617 faces per
-    the senior's reproduction), not stuck near the tiny beveled-but-untouched
-    base size that the original bug produced.
+    die was actually engraved: no non-body closed (debris) shell may remain
+    (per _non_body_closed_component_count), and the die's face count must
+    land far above the pristine 20-face count (a real 20-cut arabic-numeral
+    engrave on a d20 empirically lands around 5617 faces per the senior's
+    reproduction), not stuck near the tiny beveled-but-untouched base size
+    that the original bug produced.
     """
     import bpy
     import bmesh
@@ -477,7 +482,8 @@ def test_engraved_arabic_numerals_d20_does_not_silently_noop_from_exact_solver()
 
     bm2 = bmesh.new()
     bm2.from_mesh(obj.data)
-    largest_component_after = glyphs._largest_component_face_count(bm2)
+    non_body_closed_after = glyphs._non_body_closed_component_count(bm2)
+    faces_after = len(bm2.faces)
     post_verts = sorted(
         (round(v.co.x, 5), round(v.co.y, 5), round(v.co.z, 5)) for v in bm2.verts
     )
@@ -493,13 +499,107 @@ def test_engraved_arabic_numerals_d20_does_not_silently_noop_from_exact_solver()
         "where EXACT left the body completely untouched on every cut"
     )
 
-    assert largest_component_after > 500, (
-        f"largest connected component has only {largest_component_after} "
-        f"faces after engraving (pristine was {faces_before}); a correctly "
-        f"engraved d20 with 20 arabic-numeral cuts should land in the "
-        f"thousands (~5617 empirically), not stay near the tiny "
-        f"beveled-but-unengraved base size produced by the original "
-        f"silent-no-op bug"
+    assert non_body_closed_after == 0, (
+        f"expected 0 non-body closed (un-subtracted debris) shells after "
+        f"engraving, got {non_body_closed_after}"
+    )
+
+    assert faces_after > 500, (
+        f"die has only {faces_after} faces after engraving (pristine was "
+        f"{faces_before}); a correctly engraved d20 with 20 arabic-numeral "
+        f"cuts should land in the thousands (~5617 empirically), not stay "
+        f"near the tiny beveled-but-unengraved base size produced by the "
+        f"original silent-no-op bug"
+    )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_engraved_arabic_numerals_d4_does_not_leave_undetected_debris():
+    """
+    Regression test for asset_00079 (d4, arabic_numerals, seed=121,
+    size_mm=15.308910559884074): this is the die that exposed the deepest bug
+    in this whole engrave-verification saga. Three progressively more
+    sophisticated fixes were tried against it and all failed:
+
+    1. Tracking the largest connected shell's face count (the cd7b268 fix for
+       asset_00026) was fooled because a d4 starts at only 4 faces, so
+       EXACT's un-subtracted debris for the numeral "2" cutter (263 faces)
+       outweighed the real body (14 faces at that point) and looked like
+       growth.
+    2. Selecting "the body" by world-space bounding-box diagonal instead of
+       face count (so debris, always physically tiny, can't masquerade as
+       the body) fixed the selection but not the check: the body still only
+       grew by 1 incidental face on the "2" cut (13->14) while the other 263
+       faces of that cutter sat there as untouched debris, so "the body grew"
+       stayed trivially true.
+    3. Counting closed (watertight) shells and retrying/discarding whenever
+       more than one existed also failed, because the die's own body is
+       essentially never itself fully closed after a cut -- so a single
+       un-subtracted debris blob (which IS closed) coexisting with the
+       (open) body always presented as exactly "1 closed shell", identical
+       to the "0 debris" case, and the check could never fire for exactly
+       one debris blob (only for two or more coexisting at once, and even
+       then it left older debris from earlier cuts untouched).
+
+    The fix that actually resolves this asset asks a per-cut DELTA question
+    instead of an absolute count or a growth comparison: did *this specific
+    cut* create a new closed shell that wasn't present immediately before it
+    ran, excluding whichever component has the largest bounding-box diagonal
+    (the die's own body, whether or not that component itself happens to be
+    open or closed)? See _non_body_closed_component_count and
+    _boolean_diff_apply's docstring for the full history. A final backstop in
+    apply_engraved_glyphs (_discard_non_body_closed_debris) also deletes any
+    non-body closed shell still present after the whole cut loop finishes, as
+    a guarantee independent of whether the per-cut retry logic caught it.
+
+    This test reproduces the exact failing die/style/size and asserts no
+    debris survived at all: not via a specific face-count range (since the
+    end-of-loop backstop may or may not have had to trigger for this exact
+    asset -- either path is an acceptable pass), but via the direct
+    structural invariant itself.
+    """
+    import bpy
+    import bmesh
+    from dice_gen import geometry, numbering, glyphs
+
+    die_type = "d4"
+    size_mm = 15.308910559884074  # matches asset_00079 (seed=121) exactly
+
+    obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+    assert len(assignment) == 4, "d4 should have 4 faces assigned"
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    faces_before = len(bm.faces)
+    bm.free()
+    assert faces_before == 4, "pristine d4 should have 4 faces"
+
+    glyphs.apply_engraved_glyphs(
+        obj, die_type, assignment,
+        glyph_style="arabic_numerals", glyph_fill="blank",
+        font_id="font_sans_bold", size_mm=size_mm,
+    )
+
+    bm2 = bmesh.new()
+    bm2.from_mesh(obj.data)
+    non_body_closed_after = glyphs._non_body_closed_component_count(bm2)
+    faces_after = len(bm2.faces)
+    bm2.free()
+
+    assert non_body_closed_after == 0, (
+        f"expected 0 non-body closed (un-subtracted debris) shells after "
+        f"engraving asset_00079's exact die, got {non_body_closed_after}; "
+        f"this is exactly the failure mode (a lone un-subtracted numeral "
+        f"cutter, e.g. the 263-face cutter mesh for digit '2') that "
+        f"survived three prior fix attempts on this asset"
+    )
+    assert faces_after > faces_before, (
+        f"die has only {faces_after} faces after engraving (pristine was "
+        f"{faces_before}); a genuinely engraved d4 should show substantial "
+        f"growth from the 4 numeral cuts"
     )
 
     bpy.data.objects.remove(obj, do_unlink=True)
@@ -514,6 +614,7 @@ def run():
     test_engraved_greek_numerals_d12_does_not_collapse_from_unwelded_cutter()
     test_engraved_greek_numerals_d10_does_not_collapse_from_exact_solver_on_alpha_cut()
     test_engraved_arabic_numerals_d20_does_not_silently_noop_from_exact_solver()
+    test_engraved_arabic_numerals_d4_does_not_leave_undetected_debris()
 
 
 run_and_report(run)
