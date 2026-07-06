@@ -1028,6 +1028,80 @@ def test_decal_glyphs_use_asset_id_to_avoid_cross_asset_filename_collisions():
         )
 
 
+def test_tangent_bitangent_only_falls_back_to_y_for_truly_vertical_normals():
+    """
+    Regression test for the orientation-discontinuity bug: the old
+    abs(normal.z) < 0.9 threshold triggered the Y-axis up-hint fallback
+    for a d20's near-pole faces (normal.z ~= +/-0.9342), which are tilted
+    but NOT axis-aligned, creating an abrupt jump between that ring and
+    its neighboring ring -- confirmed both numerically (dumping every
+    d20 face's computed bitangent: the old threshold produced a flat
+    (0, 1, 0) exactly at that ring while neighboring rings varied
+    smoothly) and visually (one face's engraved numeral reading upright,
+    the adjacent face's numeral at a distinctly different angle). The
+    fixed threshold (0.999) must mean every one of a d20's 20 faces
+    (none of which has a normal exactly axis-aligned to Z) uses the
+    smoothly-varying Z-projection, never the flat Y fallback.
+    """
+    import bpy
+    from dice_gen import geometry, glyphs
+
+    obj = geometry.build_die_base_mesh("d20", size_mm=20.0)
+    for face in obj.data.polygons:
+        normal = face.normal
+        assert abs(normal.z) < 0.999, (
+            f"test assumption violated: d20 face {face.index} has "
+            f"normal.z={normal.z:.4f}, expected all d20 faces to be "
+            f"non-axis-aligned"
+        )
+        tangent, bitangent = glyphs._tangent_bitangent(normal)
+        is_flat_y_fallback = (
+            abs(bitangent.x) < 1e-6
+            and abs(bitangent.z) < 1e-6
+            and abs(abs(bitangent.y) - 1.0) < 1e-6
+        )
+        assert not is_flat_y_fallback, (
+            f"face {face.index} (normal.z={normal.z:.4f}, not axis-aligned) "
+            f"incorrectly used the flat Y-axis fallback bitangent {tuple(bitangent)}"
+        )
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_tangent_bitangent_falls_back_to_y_for_axis_aligned_normals():
+    """
+    d6 has faces with normal EXACTLY axis-aligned to global Z (e.g. a
+    cube's top/bottom faces). For these, up_hint=Z and normal=Z are
+    parallel, making up_hint.cross(normal) the zero vector -- an
+    undefined/degenerate tangent. The Y-axis fallback must still trigger
+    for these so tangent/bitangent stay well-defined (non-zero-length),
+    confirming the fixed 0.999 threshold didn't accidentally remove the
+    fallback for the case it's actually needed for.
+    """
+    import bpy
+    from dice_gen import geometry, glyphs
+
+    obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
+    found_axis_aligned_face = False
+    for face in obj.data.polygons:
+        normal = face.normal
+        if abs(normal.z) > 0.999:
+            found_axis_aligned_face = True
+            tangent, bitangent = glyphs._tangent_bitangent(normal)
+            assert tangent.length > 0.5, (
+                f"degenerate (near-zero-length) tangent for axis-aligned "
+                f"face {face.index}: {tuple(tangent)}"
+            )
+            assert bitangent.length > 0.5, (
+                f"degenerate (near-zero-length) bitangent for axis-aligned "
+                f"face {face.index}: {tuple(bitangent)}"
+            )
+    assert found_axis_aligned_face, (
+        "expected d6 to have at least one Z-axis-aligned face (a cube's "
+        "top or bottom face) -- test assumption violated"
+    )
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
@@ -1044,6 +1118,8 @@ def run():
     test_apply_engraved_glyphs_aggregates_forced_cut_warnings()
     test_boolean_diff_apply_returns_warning_when_both_solvers_fail()
     test_discard_non_body_closed_debris_returns_warning_for_manual_debris()
+    test_tangent_bitangent_only_falls_back_to_y_for_truly_vertical_normals()
+    test_tangent_bitangent_falls_back_to_y_for_axis_aligned_normals()
 
 
 run_and_report(run)

@@ -57,12 +57,44 @@ def glyph_label(value, glyph_style):
     raise ValueError(f"glyph_label not applicable to style {glyph_style!r}")
 
 
+def _tangent_bitangent(normal, threshold=0.999):
+    """
+    Given a (normalized) face normal, returns a consistent (tangent,
+    bitangent) in-plane basis by projecting a global "up" reference
+    direction onto the face's plane. Global +Z is used as the up
+    reference for every face EXCEPT when normal is itself (near-)parallel
+    to +/-Z, where the projection is undefined (up_hint.cross(normal)
+    would be the zero vector) -- global +Y is used instead for that
+    narrow case only.
+
+    The threshold (normal.z's absolute value) for switching to the Y
+    fallback must stay very close to 1.0. An earlier version used 0.9,
+    which also caught merely-steep-but-not-vertical faces (e.g. a d20's
+    near-pole ring, normal.z ~= +/-0.9342): those faces got the flat
+    (0, 1, 0) fallback while their immediate neighbors (normal.z ~= +/-0.577)
+    got the smoothly-varying Z-projection, producing an abrupt rotation
+    jump between adjacent faces -- confirmed both numerically (dumping
+    every d20 face's computed bitangent) and visually (one face's engraved
+    numeral reading upright, the adjacent face's numeral at a distinctly
+    different angle). 0.999 only catches genuinely axis-aligned normals
+    (e.g. d6/d8's exactly-vertical top/bottom faces), where the fallback
+    is actually required to avoid a degenerate zero-length tangent.
+
+    Shared by _face_orientation_matrix (engraved cutter placement,
+    world-space normal) and _unwrap_faces_to_full_square (decal UV
+    unwrap, local-space normal) so both glyph methods use one consistent
+    orientation convention instead of two independently-behaving ones.
+    """
+    up_hint = Vector((0, 0, 1)) if abs(normal.z) < threshold else Vector((0, 1, 0))
+    tangent = up_hint.cross(normal).normalized()
+    bitangent = normal.cross(tangent).normalized()
+    return tangent, bitangent
+
+
 def _face_orientation_matrix(face, obj_matrix):
     center = obj_matrix @ face.center
     normal = (obj_matrix.to_3x3() @ face.normal).normalized()
-    up_hint = Vector((0, 0, 1)) if abs(normal.z) < 0.9 else Vector((0, 1, 0))
-    tangent = up_hint.cross(normal).normalized()
-    bitangent = normal.cross(tangent).normalized()
+    tangent, bitangent = _tangent_bitangent(normal)
     rot = Matrix((tangent, bitangent, normal)).transposed().to_4x4()
     rot.translation = center
     return rot
