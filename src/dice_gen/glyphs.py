@@ -462,6 +462,16 @@ def _render_material_swatch(material, resolution, tmp_dir, asset_id):
     light_data.energy = 3.0
     light_obj = bpy.data.objects.new("swatch_light", light_data)
     light_obj.location = (0, 0, 3)
+    # Sun lights are directional (location irrelevant to lighting, only
+    # rotation is) -- a Sun light left at the default identity rotation
+    # shines straight down -Z, exactly coaxial with the camera at (0, 0, 2)
+    # looking down -Z at the same plane. For any material with noticeable
+    # specularity (glitter, metallic -- low roughness), that alignment
+    # points the light's specular reflection straight back into the camera,
+    # blowing the swatch out to near-white regardless of the material's true
+    # color (confirmed: a moderate-value green glitter material rendered as
+    # pure white (1,1,1)). Tilting the light off-axis avoids this.
+    light_obj.rotation_euler = (0.6, 0.35, 0)
     scene.collection.objects.link(light_obj)
 
     # size=2.0 (spanning -1..1) is comfortably larger than the camera's
