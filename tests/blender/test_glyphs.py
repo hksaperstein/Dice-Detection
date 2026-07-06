@@ -1164,6 +1164,145 @@ def test_unwrap_faces_to_full_square_covers_full_uv_range_per_face():
         bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_load_font_maps_font_ids_to_distinct_installed_fonts():
+    """
+    Regression test for the font_or_style_id-is-sampled-but-never-applied
+    gap: sampler.py samples one of FONT_IDS ("font_sans_bold",
+    "font_serif_regular", "font_display_condensed") per die and stores it
+    in the manifest, but neither apply_engraved_glyphs nor
+    _render_label_to_image ever read it -- every die used Blender's single
+    default font regardless. This checks _load_font maps each of the 3
+    IDs to a real, distinct font file (confirmed installed on this system
+    during planning), and that the SAME font_id returns the SAME font
+    datablock on a second call (no redundant reload).
+    """
+    from dice_gen import glyphs
+
+    seen_filepaths = set()
+    for font_id, expected_path in glyphs.FONT_FILES.items():
+        font = glyphs._load_font(font_id, glyph_style="arabic_numerals")
+        assert font is not None, f"{font_id}: expected a loaded font, got None"
+        assert font.filepath == expected_path, (
+            f"{font_id}: expected filepath {expected_path}, got {font.filepath}"
+        )
+        assert font.filepath not in seen_filepaths, (
+            f"{font_id}: filepath {font.filepath} was already used by another "
+            f"font_id -- font_or_style_id values must map to genuinely distinct fonts"
+        )
+        seen_filepaths.add(font.filepath)
+
+        font_again = glyphs._load_font(font_id, glyph_style="arabic_numerals")
+        assert font_again is font, (
+            f"{font_id}: calling _load_font twice should reuse the same "
+            f"loaded font datablock, not create a duplicate"
+        )
+
+
+def test_load_font_returns_none_for_cjk_numerals_regardless_of_font_id():
+    """
+    Liberation Sans/Serif/Sans-Narrow (this project's FONT_FILES) have no
+    CJK glyph coverage -- confirmed by rendering a CJK character with
+    Liberation Sans Bold during planning, which produced an empty
+    placeholder rectangle instead of the correct character, while
+    Blender's own default bundled font renders the same character
+    correctly. _load_font must return None for glyph_style ==
+    "cjk_numerals" for every font_id, so the caller leaves
+    txt_obj.data.font at Blender's default rather than swapping to a font
+    that can't render the requested characters.
+    """
+    from dice_gen import glyphs
+
+    for font_id in glyphs.FONT_FILES:
+        font = glyphs._load_font(font_id, glyph_style="cjk_numerals")
+        assert font is None, (
+            f"{font_id}: expected None for cjk_numerals glyph_style, got {font}"
+        )
+
+
+def test_load_font_returns_none_for_unrecognized_font_id():
+    from dice_gen import glyphs
+
+    font = glyphs._load_font("not_a_real_font_id", glyph_style="arabic_numerals")
+    assert font is None
+
+
+def test_apply_engraved_glyphs_uses_load_font_with_correct_glyph_style():
+    """
+    Confirms apply_engraved_glyphs actually calls _load_font with this
+    call's own font_id/glyph_style (not a stale/hardcoded value), via a
+    spy on the real function -- since the cutter text object is destroyed
+    by the boolean cut, this is the only way to prove the wiring happened
+    without re-deriving font state from the final baked mesh.
+    """
+    import bpy
+    from dice_gen import geometry, numbering, glyphs
+
+    die_type = "d6"
+    size_mm = 16.0
+    obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+    assert len(assignment) == 6, "d6 should have 6 faces assigned"
+
+    real_load_font = glyphs._load_font
+    calls = []
+
+    def spy_load_font(font_id, glyph_style):
+        calls.append((font_id, glyph_style))
+        return real_load_font(font_id, glyph_style)
+
+    glyphs._load_font = spy_load_font
+    try:
+        glyphs.apply_engraved_glyphs(
+            obj, die_type, assignment,
+            glyph_style="roman_numerals", glyph_fill="blank",
+            font_id="font_serif_regular", size_mm=size_mm,
+        )
+    finally:
+        glyphs._load_font = real_load_font
+
+    assert len(calls) == 6, f"expected one _load_font call per face cut, got {len(calls)}"
+    assert all(c == ("font_serif_regular", "roman_numerals") for c in calls), calls
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_apply_decal_glyphs_uses_load_font_with_correct_glyph_style():
+    import bpy
+    from dice_gen import geometry, numbering, glyphs, materials
+
+    die_type = "d6"
+    size_mm = 16.0
+    obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+    mat = materials.build_material(obj.name, "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
+    materials.apply_material(obj, mat)
+
+    real_load_font = glyphs._load_font
+    calls = []
+
+    def spy_load_font(font_id, glyph_style):
+        calls.append((font_id, glyph_style))
+        return real_load_font(font_id, glyph_style)
+
+    glyphs._load_font = spy_load_font
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            glyphs.apply_decal_glyphs(
+                obj, die_type, assignment,
+                glyph_style="greek_numerals", font_id="font_display_condensed",
+                size_mm=size_mm, asset_id="test_font_spy", tmp_dir=tmp_dir,
+            )
+    finally:
+        glyphs._load_font = real_load_font
+
+    assert len(calls) == 6, f"expected one _load_font call per face, got {len(calls)}"
+    assert all(c == ("font_display_condensed", "greek_numerals") for c in calls), calls
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
@@ -1183,6 +1322,11 @@ def run():
     test_tangent_bitangent_only_falls_back_to_y_for_truly_vertical_normals()
     test_tangent_bitangent_falls_back_to_y_for_axis_aligned_normals()
     test_unwrap_faces_to_full_square_covers_full_uv_range_per_face()
+    test_load_font_maps_font_ids_to_distinct_installed_fonts()
+    test_load_font_returns_none_for_cjk_numerals_regardless_of_font_id()
+    test_load_font_returns_none_for_unrecognized_font_id()
+    test_apply_engraved_glyphs_uses_load_font_with_correct_glyph_style()
+    test_apply_decal_glyphs_uses_load_font_with_correct_glyph_style()
 
 
 run_and_report(run)

@@ -13,6 +13,40 @@ from mathutils import Vector, Matrix
 
 ENGRAVE_DEPTH_FRACTION = 0.04
 
+FONT_FILES = {
+    "font_sans_bold": "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "font_serif_regular": "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+    "font_display_condensed": "/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Bold.ttf",
+}
+
+
+def _load_font(font_id, glyph_style):
+    """
+    Maps a sampled font_or_style_id to a real, distinct installed font,
+    loaded once and reused (bpy.data.fonts.load creates a new VectorFont
+    datablock each call unless one with a matching filepath is already
+    loaded, so this checks first to avoid redundant loads across a
+    batch).
+
+    Returns None for glyph_style == "cjk_numerals" regardless of
+    font_id -- confirmed empirically that none of FONT_FILES' fonts have
+    CJK glyph coverage (rendering a CJK character with Liberation Sans
+    Bold produces an empty placeholder rectangle, not the correct
+    character), while Blender's own default bundled font already renders
+    CJK correctly. Returning None means the caller leaves
+    txt_obj.data.font unset, i.e. Blender's default font.
+    """
+    if glyph_style == "cjk_numerals":
+        return None
+    font_path = FONT_FILES.get(font_id)
+    if font_path is None:
+        return None
+    for font in bpy.data.fonts:
+        if font.filepath == font_path:
+            return font
+    return bpy.data.fonts.load(font_path)
+
+
 PIP_VALUE_LAYOUTS = {
     1: [(0, 0)],
     2: [(-0.3, -0.3), (0.3, 0.3)],
@@ -462,6 +496,9 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
             bpy.ops.object.text_add()
             txt_obj = bpy.context.active_object
             txt_obj.data.body = label
+            font = _load_font(font_id, glyph_style)
+            if font is not None:
+                txt_obj.data.font = font
             txt_obj.data.align_x = 'CENTER'
             txt_obj.data.align_y = 'CENTER'
             txt_obj.data.size = glyph_font_size
@@ -737,7 +774,7 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
 
     for face_index, value in assignment.items():
         image_path = os.path.join(tmp_dir, f"{asset_id}_face{face_index}.png")
-        _render_label_to_image(value, glyph_style, image_path, resolution=resolution)
+        _render_label_to_image(value, glyph_style, font_id, image_path, resolution=resolution)
 
         if base_mat is not None:
             mat = base_mat.copy()
@@ -771,7 +808,7 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
         die_obj.data.polygons[face_index].material_index = len(die_obj.data.materials) - 1
 
 
-def _render_label_to_image(value, glyph_style, image_path, resolution=256):
+def _render_label_to_image(value, glyph_style, font_id, image_path, resolution=256):
     scene = bpy.data.scenes.new("dice_gen_decal_tmp")
     scene.render.engine = 'BLENDER_EEVEE'
     scene.render.resolution_x = resolution
@@ -806,6 +843,9 @@ def _render_label_to_image(value, glyph_style, image_path, resolution=256):
         bpy.ops.object.text_add(location=(0, 0, 0))
         txt_obj = bpy.context.active_object
         txt_obj.data.body = label
+        font = _load_font(font_id, glyph_style)
+        if font is not None:
+            txt_obj.data.font = font
         txt_obj.data.align_x = 'CENTER'
         txt_obj.data.align_y = 'CENTER'
         txt_obj.data.size = 1.0
