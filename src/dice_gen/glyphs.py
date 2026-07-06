@@ -11,7 +11,7 @@ import bmesh
 import numpy as np
 from mathutils import Vector, Matrix
 
-ENGRAVE_DEPTH_FRACTION = 0.025
+ENGRAVE_DEPTH_FRACTION = 0.03
 
 FONT_FILES = {
     "font_sans_bold": "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",

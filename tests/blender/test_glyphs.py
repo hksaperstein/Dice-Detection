@@ -1304,10 +1304,19 @@ def test_apply_decal_glyphs_uses_load_font_with_correct_glyph_style():
 
 
 def test_engrave_depth_fraction_is_shallower_than_before():
+    """
+    0.025 was the first candidate value, but it measurably increased the
+    known EXACT/FLOAT-collapse skipped-cut failure rate on some dice
+    (confirmed empirically: a specific d20/roman_numerals die went from 1
+    skipped cut at the original 0.04 to 8 skipped cuts at 0.025, and a
+    d20/cjk_numerals die from 1 to 3). 0.03 was chosen after confirming it
+    restores both dice to at or below their original 0.04 failure count
+    (1 and 0 respectively) while still being 25% shallower than 0.04.
+    """
     from dice_gen import glyphs
 
-    assert glyphs.ENGRAVE_DEPTH_FRACTION == 0.025, (
-        f"expected ENGRAVE_DEPTH_FRACTION == 0.025, got "
+    assert glyphs.ENGRAVE_DEPTH_FRACTION == 0.03, (
+        f"expected ENGRAVE_DEPTH_FRACTION == 0.03, got "
         f"{glyphs.ENGRAVE_DEPTH_FRACTION}"
     )
 
