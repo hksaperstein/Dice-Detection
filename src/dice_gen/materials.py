@@ -26,6 +26,7 @@ def build_material(die_name, category, params):
     base_color = _hsv_to_rgba(params["hue"], params["saturation"], params["value"])
     bsdf.inputs["Base Color"].default_value = base_color
     bsdf.inputs["Roughness"].default_value = params["roughness"]
+    mat.diffuse_color = base_color
 
     if category == "opaque":
         pass
@@ -83,9 +84,11 @@ def apply_material(die_obj, mat, slot_index=0):
 def build_fill_material(die_name, params):
     """Plain-color material for painted glyph fill (material slot 1)."""
     fill_hue = (params["hue"] + 0.5) % 1.0
+    fill_color = _hsv_to_rgba(fill_hue, 0.8, 0.9)
     mat = bpy.data.materials.new(name=f"{die_name}_fill")
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = _hsv_to_rgba(fill_hue, 0.8, 0.9)
+    bsdf.inputs["Base Color"].default_value = fill_color
     bsdf.inputs["Roughness"].default_value = 0.4
+    mat.diffuse_color = fill_color
     return mat
