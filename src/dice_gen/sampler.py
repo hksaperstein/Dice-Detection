@@ -75,6 +75,41 @@ def sample_variant(seed: int) -> DiceVariantParams:
     )
 
 
+def sample_set(seed: int) -> dict:
+    rng = random.Random(seed)
+
+    material_category = rng.choice(MATERIAL_CATEGORIES)
+    material_params = _sample_material_params(rng, material_category)
+    glyph_method = rng.choice(GLYPH_METHODS)
+    glyph_fill = rng.choice(GLYPH_FILLS) if glyph_method == "engraved" else "painted"
+    font_or_style_id = rng.choice(FONT_IDS)
+    bevel_fraction = rng.uniform(0.02, 0.06)
+    glyph_style = rng.choice([s for s in GLYPH_STYLES if s != "pips"])
+
+    variants = {}
+    for die_type in DIE_TYPES:
+        lo, hi = SIZE_RANGES_MM[die_type]
+        size_mm = rng.uniform(lo, hi)
+        d4_placement = rng.choice(D4_PLACEMENT_STYLES) if die_type == "d4" else None
+
+        variants[die_type] = DiceVariantParams(
+            die_type=die_type,
+            size_mm=size_mm,
+            bevel_fraction=bevel_fraction,
+            numbering_scheme=f"standard_{die_type}",
+            glyph_style=glyph_style,
+            glyph_method=glyph_method,
+            glyph_fill=glyph_fill,
+            font_or_style_id=font_or_style_id,
+            material_category=material_category,
+            material_params=material_params,
+            d4_placement=d4_placement,
+            seed=seed,
+        )
+
+    return variants
+
+
 def _sample_material_params(rng, category):
     params = {
         "hue": rng.uniform(0.0, 1.0),

@@ -24,18 +24,54 @@ def generate_batch(count, seed, outdir):
                 "traceback": traceback.format_exc(),
             })
 
+    _write_manifest_and_failures(outdir, master_manifest, failures)
+
+    return len(master_manifest), len(failures)
+
+
+def generate_set_batch(num_sets, seed, outdir):
+    os.makedirs(outdir, exist_ok=True)
+    master_manifest = []
+    failures = []
+
+    for s in range(num_sets):
+        set_seed = seed + s
+        set_id = f"set_{s:05d}"
+        variants = sampler.sample_set(set_seed)
+        for die_type in sampler.DIE_TYPES:
+            asset_id = f"{set_id}_{die_type}"
+            try:
+                record = _generate_from_params(asset_id, variants[die_type], outdir)
+                record["set_id"] = set_id
+                master_manifest.append(record)
+            except Exception as e:
+                failures.append({
+                    "asset_id": asset_id,
+                    "seed": set_seed,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                })
+
+    _write_manifest_and_failures(outdir, master_manifest, failures)
+
+    return len(master_manifest), len(failures)
+
+
+def _write_manifest_and_failures(outdir, master_manifest, failures):
     with open(os.path.join(outdir, "manifest.json"), "w") as f:
         json.dump(master_manifest, f, indent=2)
     with open(os.path.join(outdir, "failures.json"), "w") as f:
         json.dump(failures, f, indent=2)
 
-    return len(master_manifest), len(failures)
-
 
 def _generate_one(asset_id, seed, outdir):
+    params = sampler.sample_variant(seed)
+    return _generate_from_params(asset_id, params, outdir)
+
+
+def _generate_from_params(asset_id, params, outdir):
     import bpy
 
-    params = sampler.sample_variant(seed)
     die_obj = geometry.build_die_base_mesh(params.die_type, params.size_mm)
 
     face_pairs = geometry.compute_opposite_face_pairs(die_obj)
@@ -58,7 +94,7 @@ def _generate_one(asset_id, seed, outdir):
         materials.apply_material(die_obj, mat, slot_index=0)
         glyphs.apply_decal_glyphs(
             die_obj, params.die_type, assignment, params.glyph_style,
-            params.font_or_style_id, params.size_mm, outdir,
+            params.font_or_style_id, params.size_mm, asset_id, outdir,
         )
 
     manifest_record = {
@@ -74,7 +110,7 @@ def _generate_one(asset_id, seed, outdir):
         "font_or_style_id": params.font_or_style_id,
         "material_category": params.material_category,
         "material_params": params.material_params,
-        "seed": seed,
+        "seed": params.seed,
     }
 
     exporter.export_asset(die_obj, manifest_record, outdir, params.bevel_fraction, params.size_mm)

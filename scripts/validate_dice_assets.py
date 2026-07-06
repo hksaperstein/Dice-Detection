@@ -2,10 +2,13 @@ import argparse
 import json
 import os
 import sys
+from collections import defaultdict
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from dice_gen import numbering
+
+EXPECTED_SET_DIE_TYPES = {"d4", "d6", "d8", "d10", "d12", "d20"}
 
 
 def validate(outdir):
@@ -34,6 +37,26 @@ def validate(outdir):
                 f"{asset_id}: num_sides {record['num_sides']} != expected "
                 f"{expected_sides} for {die_type}"
             )
+
+    sets = defaultdict(list)
+    for record in manifest:
+        set_id = record.get("set_id")
+        if set_id is not None:
+            sets[set_id].append(record)
+
+    for set_id, records in sets.items():
+        die_types_seen = [r["die_type"] for r in records]
+        seen_counts = {}
+        for dt in die_types_seen:
+            seen_counts[dt] = seen_counts.get(dt, 0) + 1
+
+        missing = EXPECTED_SET_DIE_TYPES - set(die_types_seen)
+        if missing:
+            errors.append(f"{set_id}: missing die types {missing}")
+
+        for dt, count in seen_counts.items():
+            if dt in EXPECTED_SET_DIE_TYPES and count > 1:
+                errors.append(f"{set_id}: duplicate die type {dt}")
 
     return errors
 

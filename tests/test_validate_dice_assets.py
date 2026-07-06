@@ -50,3 +50,46 @@ def test_validate_passes_for_well_formed_manifest():
 
         errors = validate(tmp_path)
         assert errors == []
+
+
+def _set_record(tmp_path, asset_id, die_type, set_id):
+    usd_name = f"{asset_id}.usd"
+    thumb_name = f"{asset_id}_thumb.png"
+    open(os.path.join(tmp_path, usd_name), "w").write("x")
+    open(os.path.join(tmp_path, thumb_name), "w").close()
+    num_sides = {"d4": 4, "d6": 6, "d8": 8, "d10": 10, "d12": 12, "d20": 20}[die_type]
+    return {
+        "asset_id": asset_id, "die_type": die_type, "num_sides": num_sides,
+        "usd_path": usd_name, "thumbnail_path": thumb_name, "set_id": set_id,
+    }
+
+
+def test_validate_passes_for_complete_set():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_path:
+        die_types = ["d4", "d6", "d8", "d10", "d12", "d20"]
+        records = [
+            _set_record(tmp_path, f"set_00000_{dt}", dt, "set_00000")
+            for dt in die_types
+        ]
+        _write_manifest(tmp_path, records)
+
+        errors = validate(tmp_path)
+        assert errors == []
+
+
+def test_validate_reports_missing_die_type_in_set():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_path:
+        die_types = ["d4", "d6", "d8", "d10", "d12"]  # missing d20
+        records = [
+            _set_record(tmp_path, f"set_00000_{dt}", dt, "set_00000")
+            for dt in die_types
+        ]
+        _write_manifest(tmp_path, records)
+
+        errors = validate(tmp_path)
+        set_errors = [e for e in errors if "set_00000" in e]
+        assert len(set_errors) == 1
+        assert "missing die types" in set_errors[0]
+        assert "d20" in set_errors[0]

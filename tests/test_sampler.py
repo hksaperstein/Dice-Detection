@@ -52,3 +52,62 @@ def test_d4_placement_set_only_for_d4():
             assert v.d4_placement in ("face_centered", "vertex_labeled")
         else:
             assert v.d4_placement is None
+
+
+def test_sample_set_is_reproducible_with_same_seed():
+    a = sampler.sample_set(7)
+    b = sampler.sample_set(7)
+    assert a == b
+
+
+def test_sample_set_has_exactly_the_expected_die_type_keys():
+    for seed in range(10):
+        variants = sampler.sample_set(seed)
+        assert set(variants.keys()) == set(sampler.DIE_TYPES)
+        assert set(variants.keys()) == {"d4", "d6", "d8", "d10", "d12", "d20"}
+
+
+def test_sample_set_glyph_style_is_never_pips():
+    for seed in range(50):
+        variants = sampler.sample_set(seed)
+        for v in variants.values():
+            assert v.glyph_style != "pips"
+
+
+def test_sample_set_shares_attributes_across_all_die_types():
+    shared_fields = [
+        "material_category", "material_params", "glyph_method",
+        "glyph_fill", "font_or_style_id", "bevel_fraction",
+    ]
+    for seed in range(20):
+        variants = sampler.sample_set(seed)
+        values = list(variants.values())
+        first = values[0]
+        for v in values[1:]:
+            for field in shared_fields:
+                assert getattr(v, field) == getattr(first, field)
+
+
+def test_sample_set_size_mm_within_each_die_types_own_range():
+    for seed in range(20):
+        variants = sampler.sample_set(seed)
+        for die_type, v in variants.items():
+            lo, hi = sampler.SIZE_RANGES_MM[die_type]
+            assert lo <= v.size_mm <= hi
+
+
+def test_sample_set_d4_placement_only_set_for_d4():
+    for seed in range(20):
+        variants = sampler.sample_set(seed)
+        for die_type, v in variants.items():
+            if die_type == "d4":
+                assert v.d4_placement in ("face_centered", "vertex_labeled")
+            else:
+                assert v.d4_placement is None
+
+
+def test_sample_set_seed_field_matches_input_seed_for_all_dice():
+    for seed in range(10):
+        variants = sampler.sample_set(seed)
+        for v in variants.values():
+            assert v.seed == seed

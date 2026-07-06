@@ -35,4 +35,36 @@ def test_generate_batch_produces_manifest_and_assets():
         assert os.path.exists(failures_path)
 
 
-run_and_report(test_generate_batch_produces_manifest_and_assets)
+def test_generate_set_batch_produces_matching_set():
+    from dice_gen import orchestrator
+
+    with tempfile.TemporaryDirectory() as outdir:
+        generated, failed = orchestrator.generate_set_batch(num_sets=1, seed=2000, outdir=outdir)
+
+        assert generated + failed == 6
+
+        manifest_path = os.path.join(outdir, "manifest.json")
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        assert len(manifest) == generated
+
+        set_ids = {record["set_id"] for record in manifest}
+        assert len(set_ids) == 1
+
+        die_types = {record["die_type"] for record in manifest}
+        assert die_types == {"d4", "d6", "d8", "d10", "d12", "d20"}
+
+        material_categories = {record["material_category"] for record in manifest}
+        glyph_styles = {record["glyph_style"] for record in manifest}
+        font_ids = {record["font_or_style_id"] for record in manifest}
+        assert len(material_categories) == 1
+        assert len(glyph_styles) == 1
+        assert len(font_ids) == 1
+
+
+def run():
+    test_generate_batch_produces_manifest_and_assets()
+    test_generate_set_batch_produces_matching_set()
+
+
+run_and_report(run)
