@@ -605,11 +605,154 @@ def test_engraved_arabic_numerals_d4_does_not_leave_undetected_debris():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_decal_glyphs_survive_usd_export_roundtrip_without_black_faces():
+    """
+    Regression test for the export-loss bug fixed alongside commit 5bc3361's
+    shader-graph fix: apply_decal_glyphs used to composite the glyph decal
+    onto the die's base material via a ShaderNodeMix wired into the
+    Principled BSDF's Base Color input, using the decal's alpha as the mix
+    factor. That in-memory graph rendered correctly in Blender's own
+    viewport/render, and the existing
+    test_decal_glyphs_assigns_one_material_per_face test only ever inspected
+    that in-memory graph -- so it kept passing even though the fix was
+    silently lost on export. bpy.ops.wm.usd_export cannot represent a
+    ShaderNodeMix (confirmed in both default UsdPreviewSurface mode and with
+    generate_materialx_network=True): every previously-shipped
+    printed_decal asset (~247 of a 500-asset batch) exported with Base Color
+    fed directly by the raw, uncomposited glyph-decal Image Texture again --
+    reproducing the exact pre-5bc3361 defect (solid black faces outside the
+    glyph strokes) invisibly, only in the exported USD, never caught by any
+    in-memory-only test.
+
+    The real fix (this commit) composites the glyph decal onto a render of
+    the die's actual base material at the pixel level in Python/numpy
+    (_render_material_swatch + _composite_alpha_over) *before* the texture
+    is ever wired into the shader graph, so the wire itself is a plain,
+    single Image-Texture-to-Base-Color connection with no Mix node for the
+    exporter to drop.
+
+    This test proves the fix actually survives export, not just that the
+    in-memory graph looks right: it builds a die with a real base material
+    (the same materials.build_material + apply_material sequence
+    orchestrator._generate_one uses for the decal path), applies decal
+    glyphs, round-trips the die through a real bpy.ops.wm.usd_export /
+    bpy.ops.wm.usd_import cycle, and inspects the RELOADED material and
+    RELOADED texture image -- exactly how the original bug was confirmed
+    (by reloading a shipped USD and inspecting its node graph). It asserts
+    (a) the reloaded face material's Base Color is fed directly by a
+    ShaderNodeTexImage, not a ShaderNodeMix (which usd_import could never
+    produce anyway, since usd_export never wrote one), and (b) the
+    reloaded texture image's actual pixels are NOT solid black in a corner
+    far from any glyph ink -- directly reproducing (and disproving) the
+    visual defect this whole fix addresses.
+    """
+    import bpy
+    import numpy as np
+    from dice_gen import geometry, numbering, glyphs, materials
+
+    die_type = "d6"
+    size_mm = 16.0
+
+    obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+
+    # Use a bright, saturated "opaque" color so a black-vs-non-black pixel
+    # check is unambiguous, and build/apply the material the same way
+    # orchestrator._generate_one does for the printed_decal path.
+    mat_params = {"hue": 0.55, "saturation": 0.85, "value": 0.95, "roughness": 0.3}
+    base_mat = materials.build_material(obj.name, "opaque", mat_params)
+    materials.apply_material(obj, base_mat, slot_index=0)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        glyphs.apply_decal_glyphs(
+            obj, die_type, assignment,
+            glyph_style="arabic_numerals", font_id="font_sans_bold",
+            size_mm=size_mm, tmp_dir=tmp_dir,
+        )
+
+        face_index = next(iter(assignment))
+
+        usd_path = os.path.join(tmp_dir, "roundtrip.usd")
+        bpy.ops.object.select_all(action='DESELECT')
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.wm.usd_export(filepath=usd_path, selected_objects_only=True)
+
+        # Remove the in-memory die entirely before reloading, so nothing
+        # below can accidentally pass by inspecting pre-export state instead
+        # of what actually round-tripped through the USD file.
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+        pre_import_objects = set(bpy.context.scene.objects)
+        bpy.ops.wm.usd_import(filepath=usd_path)
+        new_objects = [
+            o for o in bpy.context.scene.objects if o not in pre_import_objects
+        ]
+        reimported_die = next(o for o in new_objects if o.type == 'MESH')
+
+        reimported_mat_index = reimported_die.data.polygons[face_index].material_index
+        reimported_mat = reimported_die.data.materials[reimported_mat_index]
+        assert reimported_mat is not None, "reimported face has no material"
+
+        nt = reimported_mat.node_tree
+        bsdf = next(n for n in nt.nodes if n.type == 'BSDF_PRINCIPLED')
+        base_color_input = bsdf.inputs["Base Color"]
+
+        feeding_link = None
+        for link in nt.links:
+            if link.to_socket == base_color_input:
+                feeding_link = link
+                break
+
+        assert feeding_link is not None, (
+            "reimported material's Base Color has no incoming link at all "
+            "-- expected a direct Image Texture connection"
+        )
+        assert feeding_link.from_node.type == 'TEX_IMAGE', (
+            f"reimported material's Base Color is fed by a "
+            f"{feeding_link.from_node.type} node, not a plain Image Texture "
+            f"-- if this is a ShaderNodeMix (or anything else), the "
+            f"compositing is (still) happening in the shader graph, which "
+            f"does not survive bpy.ops.wm.usd_export"
+        )
+        assert feeding_link.from_node.type != 'MIX', (
+            "reimported material's Base Color is fed by a Mix node -- this "
+            "cannot possibly have come from usd_export/usd_import, so "
+            "something is deeply wrong with this test's assumptions"
+        )
+
+        tex_image = feeding_link.from_node.image
+        assert tex_image is not None, "reimported Image Texture node has no image"
+        width, height = tex_image.size
+        assert width > 0 and height > 0, "reimported texture image has zero size"
+
+        pixels = np.empty(width * height * 4, dtype=np.float32)
+        tex_image.pixels.foreach_get(pixels)
+        pixels = pixels.reshape(height, width, 4)
+
+        # Sample a corner pixel: the glyph decal's UV smart-project maps
+        # each face to its own island, but the glyph ink itself is centered
+        # and small (see PIP_VALUE_LAYOUTS / glyph_font_size), so a texture
+        # corner is always far from any glyph stroke and should show the
+        # die's actual base material color, not black.
+        corner_rgb = pixels[0, 0, :3]
+        assert not np.allclose(corner_rgb, 0.0, atol=0.02), (
+            f"reimported decal texture's corner pixel is solid black "
+            f"({corner_rgb}) -- this is exactly the pre-5bc3361 visual "
+            f"defect (raw glyph-on-transparent composited/exported with no "
+            f"base material showing through) that this whole fix addresses"
+        )
+
+    bpy.data.objects.remove(reimported_die, do_unlink=True)
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
     test_engraved_glyphs_blank_fill_does_not_add_second_material()
     test_decal_glyphs_assigns_one_material_per_face()
+    test_decal_glyphs_survive_usd_export_roundtrip_without_black_faces()
     test_engraved_glyphs_use_pristine_face_orientations_not_reindexed_mid_loop()
     test_engraved_greek_numerals_d12_does_not_collapse_from_unwelded_cutter()
     test_engraved_greek_numerals_d10_does_not_collapse_from_exact_solver_on_alpha_cut()

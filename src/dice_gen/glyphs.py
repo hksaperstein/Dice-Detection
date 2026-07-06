@@ -8,6 +8,7 @@ import os
 
 import bpy
 import bmesh
+import numpy as np
 from mathutils import Vector, Matrix
 
 ENGRAVE_DEPTH_FRACTION = 0.04
@@ -419,57 +420,129 @@ def _assign_fill_material_to_recessed_faces(die_obj):
     bm.free()
 
 
-def _socket_by_identifier(sockets, identifier):
+def _render_material_swatch(material, resolution, tmp_dir):
     """
-    ShaderNodeMix (data_type='RGBA') exposes several same-named sockets
-    (Factor/A/B repeated per data type: float/vector/color/rotation), so
-    looking them up by .name is ambiguous. Only the identifier is unique.
+    Renders what `material` actually looks like -- its real color/procedural
+    pattern, fully lit and shaded -- as a flat, opaque PNG, by applying it to
+    a simple plane that fills the camera's frame and rendering with EEVEE.
+    Reuses the same new-temp-scene/camera/light/render/cleanup technique as
+    _render_label_to_image, just with a plane standing in for glyph geometry
+    and no film_transparent (the swatch needs to be fully opaque everywhere,
+    since it stands in for the die's actual material as the background layer
+    in _composite_alpha_over).
     """
-    for socket in sockets:
-        if socket.identifier == identifier:
-            return socket
-    raise KeyError(identifier)
+    image_path = os.path.join(tmp_dir, f"{material.name}_swatch.png")
+
+    scene = bpy.data.scenes.new("dice_gen_swatch_tmp")
+    scene.render.engine = 'BLENDER_EEVEE'
+    scene.render.resolution_x = resolution
+    scene.render.resolution_y = resolution
+    scene.render.film_transparent = False
+
+    cam_data = bpy.data.cameras.new("swatch_cam")
+    cam_data.type = 'ORTHO'
+    cam_data.ortho_scale = 1.4
+    cam_obj = bpy.data.objects.new("swatch_cam", cam_data)
+    cam_obj.location = (0, 0, 2)
+    scene.collection.objects.link(cam_obj)
+    scene.camera = cam_obj
+
+    light_data = bpy.data.lights.new("swatch_light", type='SUN')
+    light_data.energy = 3.0
+    light_obj = bpy.data.objects.new("swatch_light", light_data)
+    light_obj.location = (0, 0, 3)
+    scene.collection.objects.link(light_obj)
+
+    # size=2.0 (spanning -1..1) is comfortably larger than the camera's
+    # ortho_scale=1.4 view width, so the plane fills the entire frame with no
+    # background bleed -- the whole rendered image is the material's surface.
+    bpy.ops.mesh.primitive_plane_add(size=2.0, location=(0, 0, 0))
+    plane_obj = bpy.context.active_object
+    bpy.context.collection.objects.unlink(plane_obj)
+    scene.collection.objects.link(plane_obj)
+    plane_obj.data.materials.append(material)
+
+    scene.render.filepath = image_path
+    prev_scene = bpy.context.window.scene
+    bpy.context.window.scene = scene
+    bpy.ops.render.render(write_still=True)
+    bpy.context.window.scene = prev_scene
+
+    plane_data = plane_obj.data
+    bpy.data.objects.remove(plane_obj, do_unlink=True)
+    if plane_data is not None and plane_data.users == 0:
+        bpy.data.meshes.remove(plane_data)
+
+    bpy.data.objects.remove(cam_obj, do_unlink=True)
+    bpy.data.cameras.remove(cam_data)
+
+    bpy.data.objects.remove(light_obj, do_unlink=True)
+    bpy.data.lights.remove(light_data)
+
+    bpy.data.scenes.remove(scene)
+
+    return image_path
 
 
-def _wire_decal_texture_onto_material(mat, tex_node):
+def _composite_alpha_over(background_path, foreground_path, output_path, resolution):
     """
-    Composites the rendered glyph decal onto a face material's Base Color
-    using the decal image's alpha channel, instead of overwriting Base Color
-    outright. The decal images are rendered with a transparent background
-    (see _render_label_to_image), so their non-glyph pixels are RGB (0,0,0)
-    with alpha 0 -- wiring the texture's Color output straight into Base
-    Color (the previous approach) made every decal-numbered face solid
-    black except for the tiny glyph mark, hiding the die's actual material
-    entirely. Mixing by alpha preserves the underlying material's
-    color/pattern wherever there is no glyph ink, and stamps the glyph
-    where alpha is 1.
+    Alpha-composites `foreground_path` (the rendered glyph decal -- opaque
+    ink on a transparent background, see _render_label_to_image) over
+    `background_path` (the die's real material appearance, see
+    _render_material_swatch), writing the flattened result to
+    `output_path`.
+
+    This exists because the earlier fix (see apply_decal_glyphs) originally
+    did this same alpha compositing *inside Blender's shader graph* -- a
+    ShaderNodeMix wired between the decal's Image Texture node and the
+    Principled BSDF's Base Color input, using the decal's alpha as the mix
+    factor. That looked correct in Blender's own viewport/render, but
+    bpy.ops.wm.usd_export cannot represent a ShaderNodeMix in either its
+    default UsdPreviewSurface mode or with generate_materialx_network=True:
+    every exported asset silently reverted to Base Color being fed directly
+    by the raw (uncomposited) decal texture, reproducing the exact
+    solid-black-face defect the shader-graph fix was meant to solve, just
+    invisibly, only in the exported USD. Doing the compositing here, in
+    Python/numpy, on the actual pixels, means the resulting PNG already
+    contains the final composited appearance -- so it can be wired to Base
+    Color with a plain, single Image Texture node (which *is* confirmed to
+    survive USD export faithfully), and there is no shader-graph construct
+    left for the exporter to silently drop. Do not reintroduce a shader
+    Mix/compositing node for this purpose; it will not survive USD export.
+
+    PIL/Pillow is not available in Blender's bundled Python, so this uses
+    numpy directly on bpy.data.images pixel buffers instead.
     """
-    nt = mat.node_tree
-    bsdf = nt.nodes["Principled BSDF"]
-    base_color_input = bsdf.inputs["Base Color"]
+    bg_image = bpy.data.images.load(background_path)
+    fg_image = bpy.data.images.load(foreground_path)
 
-    existing_link = None
-    for link in nt.links:
-        if link.to_socket == base_color_input:
-            existing_link = link
-            break
+    bg_pixels = np.empty(resolution * resolution * 4, dtype=np.float32)
+    bg_image.pixels.foreach_get(bg_pixels)
+    bg = bg_pixels.reshape(resolution, resolution, 4)
 
-    mix = nt.nodes.new("ShaderNodeMix")
-    mix.data_type = 'RGBA'
+    fg_pixels = np.empty(resolution * resolution * 4, dtype=np.float32)
+    fg_image.pixels.foreach_get(fg_pixels)
+    fg = fg_pixels.reshape(resolution, resolution, 4)
 
-    a_color = _socket_by_identifier(mix.inputs, "A_Color")
-    b_color = _socket_by_identifier(mix.inputs, "B_Color")
-    factor = _socket_by_identifier(mix.inputs, "Factor_Float")
-    result_color = _socket_by_identifier(mix.outputs, "Result_Color")
+    fg_alpha = fg[:, :, 3:4]
+    result = np.empty_like(bg)
+    result[:, :, :3] = fg[:, :, :3] * fg_alpha + bg[:, :, :3] * (1.0 - fg_alpha)
+    # The background swatch is a fully opaque render covering the whole
+    # frame (see _render_material_swatch), so the composited result is
+    # opaque everywhere too.
+    result[:, :, 3] = 1.0
 
-    if existing_link is not None:
-        nt.links.new(existing_link.from_socket, a_color)
-    else:
-        a_color.default_value = tuple(base_color_input.default_value)
+    out_image = bpy.data.images.new(
+        "dice_gen_composited_tmp", width=resolution, height=resolution, alpha=True
+    )
+    out_image.pixels.foreach_set(result.reshape(-1))
+    out_image.filepath_raw = output_path
+    out_image.file_format = 'PNG'
+    out_image.save()
 
-    nt.links.new(tex_node.outputs["Color"], b_color)
-    nt.links.new(tex_node.outputs["Alpha"], factor)
-    nt.links.new(result_color, base_color_input)
+    bpy.data.images.remove(bg_image)
+    bpy.data.images.remove(fg_image)
+    bpy.data.images.remove(out_image)
 
 
 def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size_mm, tmp_dir):
@@ -481,21 +554,45 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
 
     base_mat = die_obj.data.materials[0] if len(die_obj.data.materials) > 0 else None
 
+    resolution = 256
+
+    # The base material is identical across every face of a die, so its
+    # appearance only needs to be rendered once, not per-face.
+    swatch_path = None
+    if base_mat is not None:
+        swatch_path = _render_material_swatch(base_mat, resolution, tmp_dir)
+
     for face_index, value in assignment.items():
         image_path = os.path.join(tmp_dir, f"{die_obj.name}_face{face_index}.png")
-        _render_label_to_image(value, glyph_style, image_path)
+        _render_label_to_image(value, glyph_style, image_path, resolution=resolution)
 
         if base_mat is not None:
             mat = base_mat.copy()
             mat.name = f"{die_obj.name}_face{face_index}_decal"
+
+            # Composite the glyph decal onto the die's real material at the
+            # pixel level (see _composite_alpha_over's docstring for why this
+            # replaced the earlier shader-graph Mix-node approach), so a
+            # plain, direct Image-Texture-to-Base-Color wire below already
+            # carries the correct final appearance.
+            composited_path = os.path.join(
+                tmp_dir, f"{die_obj.name}_face{face_index}_composited.png"
+            )
+            _composite_alpha_over(swatch_path, image_path, composited_path, resolution)
+            texture_path = composited_path
         else:
+            # No pre-assigned base material to composite onto (e.g. tests
+            # that call apply_decal_glyphs standalone) -- fall back to
+            # wiring the raw glyph decal straight to Base Color, exactly as
+            # before.
             mat = bpy.data.materials.new(name=f"{die_obj.name}_face{face_index}_decal")
             mat.use_nodes = True
+            texture_path = image_path
 
         nt = mat.node_tree
         tex_node = nt.nodes.new("ShaderNodeTexImage")
-        tex_node.image = bpy.data.images.load(image_path)
-        _wire_decal_texture_onto_material(mat, tex_node)
+        tex_node.image = bpy.data.images.load(texture_path)
+        nt.links.new(tex_node.outputs["Color"], nt.nodes["Principled BSDF"].inputs["Base Color"])
 
         die_obj.data.materials.append(mat)
         die_obj.data.polygons[face_index].material_index = len(die_obj.data.materials) - 1
