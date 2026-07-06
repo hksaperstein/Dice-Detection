@@ -657,6 +657,49 @@ def _composite_alpha_over(background_path, foreground_path, output_path, resolut
     bpy.data.images.remove(out_image)
 
 
+def _unwrap_faces_to_full_square(die_obj, margin=0.1):
+    """
+    Gives every face its OWN UV island filling the full 0-1 square,
+    instead of bpy.ops.uv.smart_project's shared-atlas packing (which
+    only gives each face a small fraction of the 0-1 space -- confirmed
+    empirically on a d8, each face's island only covered roughly a
+    0.27x0.31 patch). apply_decal_glyphs gives each face its own
+    DEDICATED texture image (the glyph centered at (0.5, 0.5)), so an
+    atlas-style shared unwrap is the wrong tool: it leaves most faces
+    sampling only a background-colored corner of their own image,
+    missing the centered glyph entirely.
+
+    Projects each face's vertices into its own (tangent, bitangent) frame
+    (see _tangent_bitangent) relative to the face center, then scales so
+    the larger of the two axis spans fits into 1.0 - 2*margin, centered
+    at (0.5, 0.5). Verified empirically to produce full per-face coverage
+    across d6/d8/d10/d12/d20's differently-shaped faces (triangle, quad,
+    kite, pentagon).
+    """
+    mesh = die_obj.data
+    if mesh.uv_layers.active is None:
+        mesh.uv_layers.new(name="decal_uv")
+    uv_layer = mesh.uv_layers.active.data
+
+    for poly in mesh.polygons:
+        tangent, bitangent = _tangent_bitangent(poly.normal)
+        center = poly.center
+
+        local_coords = []
+        for loop_index in poly.loop_indices:
+            vertex_index = mesh.loops[loop_index].vertex_index
+            rel = mesh.vertices[vertex_index].co - center
+            local_coords.append((rel.dot(tangent), rel.dot(bitangent)))
+
+        us = [c[0] for c in local_coords]
+        vs = [c[1] for c in local_coords]
+        span = max(max(us) - min(us), max(vs) - min(vs))
+        scale = (1.0 - 2 * margin) / span if span > 0 else 1.0
+
+        for loop_index, (u, v) in zip(poly.loop_indices, local_coords):
+            uv_layer[loop_index].uv = (0.5 + u * scale, 0.5 + v * scale)
+
+
 def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size_mm, asset_id, tmp_dir):
     """
     `asset_id` is used as the filename prefix for every image file this
@@ -674,11 +717,7 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
     Blender auto-uniquifies datablock names within a session and this is not
     a filename-collision concern.
     """
-    bpy.context.view_layer.objects.active = die_obj
-    bpy.ops.object.mode_set(mode='EDIT')
-    bpy.ops.mesh.select_all(action='SELECT')
-    bpy.ops.uv.smart_project(island_margin=0.05)
-    bpy.ops.object.mode_set(mode='OBJECT')
+    _unwrap_faces_to_full_square(die_obj)
 
     base_mat = die_obj.data.materials[0] if len(die_obj.data.materials) > 0 else None
 

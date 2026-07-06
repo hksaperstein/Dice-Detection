@@ -1102,6 +1102,60 @@ def test_tangent_bitangent_falls_back_to_y_for_axis_aligned_normals():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_unwrap_faces_to_full_square_covers_full_uv_range_per_face():
+    """
+    Regression test for the decal-glyph-invisibility bug: apply_decal_glyphs
+    used to call bpy.ops.uv.smart_project across the whole die, which packs
+    every face into one shared UV atlas -- confirmed empirically on a d8,
+    each face's island only covered roughly a 0.27x0.31 patch of the 0-1
+    space (e.g. u=[0.013,0.279], v=[0.013,0.320]), never the full square.
+    Since each face has its OWN dedicated texture (the composited
+    swatch+glyph PNG, glyph centered at (0.5, 0.5)), most faces ended up
+    sampling only a background-colored corner of their own image, missing
+    the glyph entirely.
+
+    _unwrap_faces_to_full_square must give each face's UV island a span
+    of at least 1.0 - 2*margin in its larger axis, AND must have that
+    island contain the (0.5, 0.5) center point where the glyph's ink
+    actually lives -- proving the glyph will land somewhere visible on
+    the face, not just that SOME UV coordinates exist. Checked across
+    every die type, since face shape (triangle, quad, kite, pentagon)
+    differs by type.
+    """
+    import bpy
+    from dice_gen import geometry, glyphs
+
+    margin = 0.1
+    for die_type in ("d4", "d6", "d8", "d10", "d12", "d20"):
+        obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
+        glyphs._unwrap_faces_to_full_square(obj, margin=margin)
+
+        uv_layer = obj.data.uv_layers.active.data
+        for poly in obj.data.polygons:
+            us = [uv_layer[li].uv.x for li in poly.loop_indices]
+            vs = [uv_layer[li].uv.y for li in poly.loop_indices]
+            u_span = max(us) - min(us)
+            v_span = max(vs) - min(vs)
+
+            assert max(u_span, v_span) >= (1.0 - 2 * margin) - 1e-6, (
+                f"{die_type} face {poly.index}: UV span too small "
+                f"(u_span={u_span:.3f}, v_span={v_span:.3f}), expected "
+                f"at least {1.0 - 2 * margin:.3f} in one axis"
+            )
+            assert min(us) <= 0.5 <= max(us), (
+                f"{die_type} face {poly.index}: UV u-range "
+                f"{min(us):.3f}-{max(us):.3f} does not contain the image "
+                f"center (0.5) where the glyph's ink lives"
+            )
+            assert min(vs) <= 0.5 <= max(vs), (
+                f"{die_type} face {poly.index}: UV v-range "
+                f"{min(vs):.3f}-{max(vs):.3f} does not contain the image "
+                f"center (0.5) where the glyph's ink lives"
+            )
+
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
@@ -1120,6 +1174,7 @@ def run():
     test_discard_non_body_closed_debris_returns_warning_for_manual_debris()
     test_tangent_bitangent_only_falls_back_to_y_for_truly_vertical_normals()
     test_tangent_bitangent_falls_back_to_y_for_axis_aligned_normals()
+    test_unwrap_faces_to_full_square_covers_full_uv_range_per_face()
 
 
 run_and_report(run)
