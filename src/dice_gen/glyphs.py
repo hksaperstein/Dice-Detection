@@ -292,54 +292,87 @@ def _boolean_diff_apply(die_obj, cutter_obj):
     open-boundary splits, since those never count as closed on either side of
     the comparison.
 
-    Even the EXACT->FLOAT retry driven by this check is not guaranteed to
-    fully merge every cutter on every degenerate input -- Blender's boolean
-    solvers simply aren't perfectly reliable across four rounds of
-    progressively subtler pathologies found on this codebase. So as a final
-    backstop, apply_engraved_glyphs runs a one-time cleanup ONCE after the
-    entire cut loop finishes (not per-cut -- see apply_engraved_glyphs):
-    any non-body closed shell still present at that point is discarded and a
-    warning is printed, guaranteeing no shipped asset ever contains stray
-    un-subtracted cutter geometry, at worst a missing numeral rather than
-    floating garbage polygons in the training data.
+    A fifth failure mode was found via direct interactive/visual inspection
+    (MatCap+Cavity viewport shading, which reveals recess geometry regardless
+    of material/lighting) on asset_00006 (d12, greek_numerals) and
+    asset_00042 (d20, cjk_numerals): the Greek "Δ"/"Ζ" and CJK "五"/"九"
+    glyphs left their faces completely unengraved, yet neither existing
+    check fired -- no collapse, no debris, volume barely changed (e.g. "Δ":
+    10365.645047 -> 10365.638003, a -0.007 change against a 2.42-volume
+    cutter). A natural-seeming fix -- retry with FLOAT whenever a cut removes
+    under ~10% of its own cutter's volume -- does correctly catch both of
+    these specific cases (FLOAT removes a normal amount, -4.16/-2.09, on
+    retry). It was NOT shipped, though: broadly testing it (100-asset real
+    batch regen) showed a 67% per-asset trigger rate, vastly higher than the
+    ~1.8% baseline this file's other checks produce, meaning it was flagging
+    (and needlessly retrying/skipping) a huge number of perfectly good cuts,
+    not just the rare true no-ops. Root cause: "cutter volume" and "post-cut
+    die volume" are only meaningful with *consistently outward-facing*
+    normals, but recalculating normals on an isolated, often still slightly
+    non-manifold single-glyph cutter mesh (see _weld_cutter_mesh -- welding
+    doesn't fully fix every glyph) has no reliable way to know which overall
+    direction is "outward" for an isolated shape with no surrounding
+    reference, so the sign of a bare calc_volume() reading after
+    bmesh.ops.recalc_face_normals is frequently flipped for cutters, making
+    "did this cut remove a plausible fraction of its cutter's volume" a much
+    noisier signal across the general population than it first appeared from
+    the two known-bad examples alone. This class of check is NOT currently
+    implemented here as a result -- the "Δ"/"Ζ" silent-near-zero-no-op
+    failure mode (and a related one found alongside it, where a cut on the
+    same die produces a volume *increase* instead of a decrease -- "Γ",
+    value=3, delta -1.10 against a 1.42-volume cutter under EXACT, and WORSE
+    under FLOAT, -2.66) remain known, unresolved gaps: neither is caught by
+    any check below, and a future fix needs a way to validate a cut's effect
+    that doesn't depend on trusting an isolated cutter mesh's own volume
+    sign.
     """
     bm_before = bmesh.new()
     bm_before.from_mesh(die_obj.data)
     volume_before = bm_before.calc_volume()
     debris_before = _non_body_closed_component_count(bm_before)
 
-    mod = die_obj.modifiers.new(name="Engrave", type='BOOLEAN')
-    mod.operation = 'DIFFERENCE'
-    mod.object = cutter_obj
-    mod.solver = 'EXACT'
-    bpy.context.view_layer.objects.active = die_obj
-    bpy.ops.object.modifier_apply(modifier=mod.name)
-
-    bm_after = bmesh.new()
-    bm_after.from_mesh(die_obj.data)
-    volume_after = bm_after.calc_volume()
-    debris_after = _non_body_closed_component_count(bm_after)
-    bm_after.free()
-
-    needs_retry = (
-        (volume_before > 0 and volume_after < volume_before * 0.5)
-        or (debris_after > debris_before)
-    )
-
-    if needs_retry:
-        # EXACT produced a degenerate/collapsed result, or this specific cut
-        # left new un-subtracted debris behind -- restore the die's pre-cut
-        # mesh from the snapshot and retry the identical cut with the more
-        # tolerant FLOAT solver instead.
-        bm_before.to_mesh(die_obj.data)
-        die_obj.data.update()
-
+    def _apply_and_measure(solver):
         mod = die_obj.modifiers.new(name="Engrave", type='BOOLEAN')
         mod.operation = 'DIFFERENCE'
         mod.object = cutter_obj
-        mod.solver = 'FLOAT'
+        mod.solver = solver
         bpy.context.view_layer.objects.active = die_obj
         bpy.ops.object.modifier_apply(modifier=mod.name)
+
+        bm = bmesh.new()
+        bm.from_mesh(die_obj.data)
+        volume_result = bm.calc_volume()
+        debris_result = _non_body_closed_component_count(bm)
+        bm.free()
+
+        bad = (
+            (volume_before > 0 and volume_result < volume_before * 0.5)
+            or (debris_result > debris_before)
+        )
+        return bad
+
+    bad = _apply_and_measure('EXACT')
+
+    if bad:
+        bm_before.to_mesh(die_obj.data)
+        die_obj.data.update()
+        bad = _apply_and_measure('FLOAT')
+
+        if bad:
+            # Both solvers produced a collapsed or still-debris-laden result
+            # -- give up on this specific cut rather than ship a broken
+            # mesh. The die ends up exactly as it was before this glyph was
+            # ever attempted; the missing numeral is the same class of rare,
+            # tracked exception apply_engraved_glyphs' end-of-loop backstop
+            # already accepts for the debris case.
+            bm_before.to_mesh(die_obj.data)
+            die_obj.data.update()
+            print(
+                f"WARNING: {die_obj.name}: a glyph cut was skipped entirely "
+                f"-- both EXACT and FLOAT solvers produced a collapsed or "
+                f"debris-laden result for this cutter; this die is missing "
+                f"one numeral/pip as a result."
+            )
 
     bm_before.free()
     bpy.data.objects.remove(cutter_obj, do_unlink=True)
