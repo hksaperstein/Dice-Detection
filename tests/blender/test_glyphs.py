@@ -83,7 +83,7 @@ def test_decal_glyphs_assigns_one_material_per_face():
         glyphs.apply_decal_glyphs(
             obj, die_type, assignment,
             glyph_style="arabic_numerals", font_id="font_sans_bold",
-            size_mm=16.0, tmp_dir=tmp_dir,
+            size_mm=16.0, asset_id="test_asset", tmp_dir=tmp_dir,
         )
         assert len(obj.data.materials) == 6
         for face_index in assignment:
@@ -668,7 +668,7 @@ def test_decal_glyphs_survive_usd_export_roundtrip_without_black_faces():
         glyphs.apply_decal_glyphs(
             obj, die_type, assignment,
             glyph_style="arabic_numerals", font_id="font_sans_bold",
-            size_mm=size_mm, tmp_dir=tmp_dir,
+            size_mm=size_mm, asset_id="test_asset", tmp_dir=tmp_dir,
         )
 
         face_index = next(iter(assignment))
@@ -747,12 +747,117 @@ def test_decal_glyphs_survive_usd_export_roundtrip_without_black_faces():
     bpy.data.objects.remove(reimported_die, do_unlink=True)
 
 
+def test_decal_glyphs_use_asset_id_to_avoid_cross_asset_filename_collisions():
+    """
+    Regression test for a filename-collision bug found by inspecting real
+    shipped assets: apply_decal_glyphs (and its helpers _render_label_to_image,
+    _render_material_swatch, _composite_alpha_over) used to derive every
+    output image's filename from die_obj.name. die_obj.name is always just
+    f"{die_type}_die" (e.g. "d8_die") -- identical across every asset of the
+    same die type in a batch -- because orchestrator._generate_one removes
+    the die object at the end of each iteration (bpy.data.objects.remove(...,
+    do_unlink=True)), which frees the name so Blender does not auto-suffix it
+    on the next same-die-type asset. orchestrator._generate_one also passes
+    the shared batch outdir (not a per-asset temp directory) as tmp_dir. Net
+    effect: every same-die-type printed_decal asset in a batch wrote to
+    colliding filenames like "d8_die_face0.png" and "d8_die_swatch.png", so a
+    later asset's render would silently overwrite an earlier asset's texture
+    file on disk -- confirmed independently by finding two real shipped
+    assets of the same die type but different material_params whose face-0
+    materials both pointed at the exact same file with byte-identical pixel
+    content.
+
+    This test reproduces the collision directly: it builds two d8 dice with
+    DIFFERENT asset_ids and DIFFERENT material colors, and calls
+    apply_decal_glyphs for each in the SAME tmp_dir (mirroring the shared
+    batch outdir orchestrator._generate_one uses for the decal path). Against
+    the pre-fix code (filenames keyed on die_obj.name, identical for both
+    dice since they're both "d8_die"), the second call's renders would
+    overwrite the first's files on disk, and both dice's face-0 Image
+    Texture would resolve to the identical filepath with identical pixel
+    content. The fix keys every output filename on the caller-supplied
+    asset_id instead, which is unique per asset within a batch, so the two
+    dice's files can never collide.
+    """
+    import bpy
+    import numpy as np
+    from dice_gen import geometry, numbering, glyphs, materials
+
+    die_type = "d8"
+    size_mm = 16.0
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        resolved_paths = []
+        corner_pixels = []
+
+        for asset_id, hue in (("asset_A", 0.05), ("asset_B", 0.6)):
+            obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+            pairs = geometry.compute_opposite_face_pairs(obj)
+            assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+
+            mat_params = {"hue": hue, "saturation": 0.85, "value": 0.95, "roughness": 0.3}
+            base_mat = materials.build_material(obj.name, "opaque", mat_params)
+            materials.apply_material(obj, base_mat, slot_index=0)
+
+            glyphs.apply_decal_glyphs(
+                obj, die_type, assignment,
+                glyph_style="arabic_numerals", font_id="font_sans_bold",
+                size_mm=size_mm, asset_id=asset_id, tmp_dir=tmp_dir,
+            )
+
+            face_index = next(iter(assignment))
+            mat_index = obj.data.polygons[face_index].material_index
+            face_mat = obj.data.materials[mat_index]
+            nt = face_mat.node_tree
+            bsdf = nt.nodes["Principled BSDF"]
+            base_color_input = bsdf.inputs["Base Color"]
+
+            feeding_link = None
+            for link in nt.links:
+                if link.to_socket == base_color_input:
+                    feeding_link = link
+                    break
+            assert feeding_link is not None, (
+                f"{asset_id}: face-0 material's Base Color has no incoming "
+                f"link -- expected an Image Texture connection"
+            )
+            tex_image = feeding_link.from_node.image
+            assert tex_image is not None, f"{asset_id}: Image Texture node has no image"
+
+            resolved_path = bpy.path.abspath(tex_image.filepath_raw or tex_image.filepath)
+            resolved_paths.append(resolved_path)
+
+            width, height = tex_image.size
+            pixels = np.empty(width * height * 4, dtype=np.float32)
+            tex_image.pixels.foreach_get(pixels)
+            pixels = pixels.reshape(height, width, 4)
+            corner_pixels.append(pixels[0, 0, :3].copy())
+
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+        assert resolved_paths[0] != resolved_paths[1], (
+            f"both dice's face-0 Image Texture resolved to the SAME file "
+            f"path ({resolved_paths[0]!r}) despite different asset_ids -- "
+            f"this is exactly the cross-asset filename collision this fix "
+            f"addresses: a later same-die-type asset in a batch would "
+            f"silently overwrite an earlier asset's texture file on disk"
+        )
+        assert not np.allclose(corner_pixels[0], corner_pixels[1], atol=0.02), (
+            f"both dice's corner (background swatch) pixels are the same "
+            f"color ({corner_pixels[0]} vs {corner_pixels[1]}) despite "
+            f"different material hues -- suggests one asset's composited "
+            f"texture file was silently overwritten by the other's render, "
+            f"reproducing the original filename-collision bug"
+        )
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
     test_engraved_glyphs_blank_fill_does_not_add_second_material()
     test_decal_glyphs_assigns_one_material_per_face()
     test_decal_glyphs_survive_usd_export_roundtrip_without_black_faces()
+    test_decal_glyphs_use_asset_id_to_avoid_cross_asset_filename_collisions()
     test_engraved_glyphs_use_pristine_face_orientations_not_reindexed_mid_loop()
     test_engraved_greek_numerals_d12_does_not_collapse_from_unwelded_cutter()
     test_engraved_greek_numerals_d10_does_not_collapse_from_exact_solver_on_alpha_cut()

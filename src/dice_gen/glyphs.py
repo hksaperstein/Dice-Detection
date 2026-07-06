@@ -420,7 +420,7 @@ def _assign_fill_material_to_recessed_faces(die_obj):
     bm.free()
 
 
-def _render_material_swatch(material, resolution, tmp_dir):
+def _render_material_swatch(material, resolution, tmp_dir, asset_id):
     """
     Renders what `material` actually looks like -- its real color/procedural
     pattern, fully lit and shaded -- as a flat, opaque PNG, by applying it to
@@ -430,8 +430,19 @@ def _render_material_swatch(material, resolution, tmp_dir):
     and no film_transparent (the swatch needs to be fully opaque everywhere,
     since it stands in for the die's actual material as the background layer
     in _composite_alpha_over).
+
+    The output filename is keyed on `asset_id`, not `material.name`: within a
+    single batch, every same-die-type asset used to derive this (and every
+    other decal-related) filename from die_obj.name, which is always just
+    f"{die_type}_die" -- identical across every asset of that die type,
+    because orchestrator._generate_one frees the name by removing the die
+    object at the end of each iteration. That let later same-die-type assets
+    in a batch silently overwrite earlier ones' texture files on disk (and
+    leave earlier assets' still-referencing USD/materials pointing at a
+    different asset's texture). asset_id is unique per asset in a batch, so
+    it can't collide this way.
     """
-    image_path = os.path.join(tmp_dir, f"{material.name}_swatch.png")
+    image_path = os.path.join(tmp_dir, f"{asset_id}_swatch.png")
 
     scene = bpy.data.scenes.new("dice_gen_swatch_tmp")
     scene.render.engine = 'BLENDER_EEVEE'
@@ -545,7 +556,23 @@ def _composite_alpha_over(background_path, foreground_path, output_path, resolut
     bpy.data.images.remove(out_image)
 
 
-def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size_mm, tmp_dir):
+def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size_mm, asset_id, tmp_dir):
+    """
+    `asset_id` is used as the filename prefix for every image file this
+    function (and its helpers _render_label_to_image, _render_material_swatch,
+    _composite_alpha_over) writes under `tmp_dir`. It must NOT be derived from
+    die_obj.name: die_obj.name is always just f"{die_type}_die" for every
+    asset of a given die type, and orchestrator._generate_one frees that name
+    (by removing the die object) at the end of every batch iteration, so
+    Blender never auto-suffixes it -- every same-die-type printed_decal asset
+    in a batch used to derive colliding filenames (e.g. "d8_die_face0.png"),
+    silently overwriting earlier assets' texture files on disk. asset_id is
+    unique per asset within a batch, so it cannot collide this way. In-memory
+    Blender datablock names (e.g. the decal materials created below) are
+    unaffected by this and intentionally left keyed on die_obj.name, since
+    Blender auto-uniquifies datablock names within a session and this is not
+    a filename-collision concern.
+    """
     bpy.context.view_layer.objects.active = die_obj
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
@@ -560,10 +587,10 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
     # appearance only needs to be rendered once, not per-face.
     swatch_path = None
     if base_mat is not None:
-        swatch_path = _render_material_swatch(base_mat, resolution, tmp_dir)
+        swatch_path = _render_material_swatch(base_mat, resolution, tmp_dir, asset_id)
 
     for face_index, value in assignment.items():
-        image_path = os.path.join(tmp_dir, f"{die_obj.name}_face{face_index}.png")
+        image_path = os.path.join(tmp_dir, f"{asset_id}_face{face_index}.png")
         _render_label_to_image(value, glyph_style, image_path, resolution=resolution)
 
         if base_mat is not None:
@@ -576,7 +603,7 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
             # plain, direct Image-Texture-to-Base-Color wire below already
             # carries the correct final appearance.
             composited_path = os.path.join(
-                tmp_dir, f"{die_obj.name}_face{face_index}_composited.png"
+                tmp_dir, f"{asset_id}_face{face_index}_composited.png"
             )
             _composite_alpha_over(swatch_path, image_path, composited_path, resolution)
             texture_path = composited_path
