@@ -1303,6 +1303,15 @@ def test_apply_decal_glyphs_uses_load_font_with_correct_glyph_style():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_engrave_depth_fraction_is_shallower_than_before():
+    from dice_gen import glyphs
+
+    assert glyphs.ENGRAVE_DEPTH_FRACTION == 0.025, (
+        f"expected ENGRAVE_DEPTH_FRACTION == 0.025, got "
+        f"{glyphs.ENGRAVE_DEPTH_FRACTION}"
+    )
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
@@ -1327,6 +1336,7 @@ def run():
     test_load_font_returns_none_for_unrecognized_font_id()
     test_apply_engraved_glyphs_uses_load_font_with_correct_glyph_style()
     test_apply_decal_glyphs_uses_load_font_with_correct_glyph_style()
+    test_engrave_depth_fraction_is_shallower_than_before()
 
 
 run_and_report(run)
