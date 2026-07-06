@@ -1152,6 +1152,14 @@ def test_unwrap_faces_to_full_square_covers_full_uv_range_per_face():
                 f"{min(vs):.3f}-{max(vs):.3f} does not contain the image "
                 f"center (0.5) where the glyph's ink lives"
             )
+            assert min(us) >= -1e-6 and max(us) <= 1.0 + 1e-6, (
+                f"{die_type} face {poly.index}: UV u-range "
+                f"{min(us):.4f}-{max(us):.4f} falls outside [0,1]"
+            )
+            assert min(vs) >= -1e-6 and max(vs) <= 1.0 + 1e-6, (
+                f"{die_type} face {poly.index}: UV v-range "
+                f"{min(vs):.4f}-{max(vs):.4f} falls outside [0,1]"
+            )
 
         bpy.data.objects.remove(obj, do_unlink=True)
 

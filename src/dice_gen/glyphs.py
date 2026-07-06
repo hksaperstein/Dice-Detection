@@ -696,8 +696,14 @@ def _unwrap_faces_to_full_square(die_obj, margin=0.1):
         span = max(max(us) - min(us), max(vs) - min(vs))
         scale = (1.0 - 2 * margin) / span if span > 0 else 1.0
 
+        # Recenter on the bounding-box midpoint (not poly.center's projection)
+        # to guarantee the final UV range is symmetric around 0.5 and bounded
+        # within [margin, 1-margin] for asymmetric face shapes like d10's kites.
+        u_mid = (max(us) + min(us)) / 2.0
+        v_mid = (max(vs) + min(vs)) / 2.0
+
         for loop_index, (u, v) in zip(poly.loop_indices, local_coords):
-            uv_layer[loop_index].uv = (0.5 + u * scale, 0.5 + v * scale)
+            uv_layer[loop_index].uv = (0.5 + (u - u_mid) * scale, 0.5 + (v - v_mid) * scale)
 
 
 def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size_mm, asset_id, tmp_dir):
