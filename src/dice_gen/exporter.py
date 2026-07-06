@@ -1,11 +1,23 @@
 """
-Bakes the non-destructive edge bevel, exports the die as USD/STL/blend,
-renders a thumbnail for visual spot-checking, and writes the per-asset JSON
-manifest.
+Bakes the non-destructive edge fillet, saves the finished model as a
+standalone .blend FIRST (before any export), then exports the die as
+USD/STL, renders a thumbnail for visual spot-checking, and writes the
+per-asset JSON manifest.
 
-Bevel uses limit_method='ANGLE' (not 'NONE') so it only rounds the die's
-structural edges (e.g. a cube's ~90 degree edges) while leaving shallow
-engraved-numeral recesses (much shallower angle deltas) crisp.
+The .blend save happens before USD/STL/thumbnail so it always captures the
+fully-finished model as the definitive source state everything else is
+derived from -- and, as a side effect, so the thumbnail render's own
+temporary camera/light objects never exist yet at .blend-save time (they're
+created and removed afterward), which would otherwise leak into the saved
+.blend the same way Blender's default startup Cube/Light/Camera would (see
+_save_blend_copy).
+
+The Bevel modifier's segments=8 (rather than the default 1) produces a
+smooth rounded fillet on the die's structural edges/corners instead of a
+single flat chamfer facet. limit_method='ANGLE' (not 'NONE') ensures it
+only rounds those structural edges (e.g. a cube's ~90 degree edges) while
+leaving shallow engraved-numeral recesses (much shallower angle deltas)
+crisp.
 """
 import json
 import math
@@ -20,6 +32,7 @@ def export_asset(die_obj, manifest_record, outdir, bevel_fraction, size_mm):
 
     mod = die_obj.modifiers.new(name="Bevel", type='BEVEL')
     mod.width = size_mm * bevel_fraction
+    mod.segments = 8
     mod.limit_method = 'ANGLE'
     mod.angle_limit = math.radians(35)
     bpy.context.view_layer.objects.active = die_obj
@@ -29,14 +42,14 @@ def export_asset(die_obj, manifest_record, outdir, bevel_fraction, size_mm):
     die_obj.select_set(True)
     bpy.context.view_layer.objects.active = die_obj
 
+    blend_path = os.path.join(outdir, f"{asset_id}.blend")
+    _save_blend_copy(blend_path)
+
     usd_path = os.path.join(outdir, f"{asset_id}.usd")
     bpy.ops.wm.usd_export(filepath=usd_path, selected_objects_only=True)
 
     stl_path = os.path.join(outdir, f"{asset_id}.stl")
     bpy.ops.wm.stl_export(filepath=stl_path, export_selected_objects=True)
-
-    blend_path = os.path.join(outdir, f"{asset_id}.blend")
-    _save_blend_copy(blend_path)
 
     thumb_path = os.path.join(outdir, f"{asset_id}_thumb.png")
     _render_thumbnail(die_obj, thumb_path, size_mm)
@@ -55,10 +68,11 @@ def export_asset(die_obj, manifest_record, outdir, bevel_fraction, size_mm):
 def _save_blend_copy(blend_path):
     """
     Saves the current .blend state as a standalone copy the user can open
-    directly in Blender. Two things have to be handled explicitly here that
-    usd_export/stl_export don't need to worry about, since save_as_mainfile
-    has no "selected objects only" option -- it always saves Blender's
-    entire current file:
+    directly in Blender, with color/texture/material immediately visible.
+    Three things have to be handled explicitly here that usd_export/
+    stl_export don't need to worry about, since save_as_mainfile has no
+    "selected objects only" option -- it always saves Blender's entire
+    current file:
 
     1. Blender's own default-startup scene (present in every
        `blender --background --python ...` session that doesn't load an
@@ -77,6 +91,15 @@ def _save_blend_copy(blend_path):
        (confirmed empirically: mesh/material counts and file size grew on
        every iteration of a save loop without this purge, and stayed flat
        once it was added).
+    3. Blender's default viewport shading mode ("Solid") doesn't evaluate
+       the shader node graph at all -- it shows a material's separate
+       diffuse_color property instead (see materials.py). Setting every
+       VIEW_3D viewport's shading to Material Preview means opening this
+       .blend shows the die's real color/texture/material immediately, on
+       whichever workspace tab (Layout, Modeling, Shading, etc.) happens
+       to be active, with no manual shading-mode switch needed. Confirmed
+       feasible even in --background mode: every one of Blender's default
+       workspace screens has a real, settable VIEW_3D area.
 
     copy=True is required so saving this per-asset .blend never changes
     the long-running batch session's own "current file" identity.
@@ -87,6 +110,15 @@ def _save_blend_copy(blend_path):
             bpy.data.objects.remove(stray, do_unlink=True)
 
     bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            for space in area.spaces:
+                if space.type == 'VIEW_3D':
+                    space.shading.type = 'MATERIAL'
+
     bpy.ops.wm.save_as_mainfile(filepath=blend_path, copy=True, check_existing=False)
 
 

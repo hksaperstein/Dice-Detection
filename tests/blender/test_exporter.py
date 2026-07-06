@@ -180,10 +180,179 @@ def test_export_asset_blend_files_do_not_accumulate_across_multiple_exports():
         bpy.data.objects.remove(obj2, do_unlink=True)
 
 
+def test_export_asset_saves_blend_before_usd_and_stl_export():
+    """
+    Regression test for the ordering requirement: the .blend must be saved
+    right after the model is finished (bevel/fillet applied), BEFORE any
+    of USD/STL/thumbnail export, so the .blend always represents the
+    single definitive source state everything else is derived from -- and
+    so the thumbnail render's own temporary camera/light objects (created
+    and removed AFTER this point) never exist yet at .blend-save time,
+    avoiding the same kind of leak _save_blend_copy already guards against
+    for Blender's default startup Cube/Light/Camera.
+
+    Verified by wrapping the real _save_blend_copy and checking, at the
+    exact moment it's called, that the USD and STL files it must precede
+    don't exist on disk yet.
+    """
+    import bpy
+    from dice_gen import geometry, materials, exporter
+
+    obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
+    mat = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
+    materials.apply_material(obj, mat)
+
+    with tempfile.TemporaryDirectory() as outdir:
+        usd_path = os.path.join(outdir, "test_order.usd")
+        stl_path = os.path.join(outdir, "test_order.stl")
+
+        real_save_blend_copy = exporter._save_blend_copy
+        observed = {}
+
+        def spy_save_blend_copy(blend_path):
+            observed["usd_existed"] = os.path.exists(usd_path)
+            observed["stl_existed"] = os.path.exists(stl_path)
+            return real_save_blend_copy(blend_path)
+
+        exporter._save_blend_copy = spy_save_blend_copy
+        try:
+            record = {"asset_id": "test_order", "die_type": "d6"}
+            exporter.export_asset(obj, record, outdir, bevel_fraction=0.04, size_mm=16.0)
+        finally:
+            exporter._save_blend_copy = real_save_blend_copy
+
+        assert observed["usd_existed"] is False, (
+            "the USD file already existed when _save_blend_copy ran -- "
+            ".blend must be saved BEFORE usd_export, not after"
+        )
+        assert observed["stl_existed"] is False, (
+            "the STL file already existed when _save_blend_copy ran -- "
+            ".blend must be saved BEFORE stl_export, not after"
+        )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_export_asset_uses_fillet_segments_not_flat_chamfer():
+    """
+    Regression test: export_asset's Bevel modifier must use segments=8 (a
+    smooth rounded fillet) rather than the default segments=1 (a single
+    flat chamfer facet). Verified by independently building a second,
+    untouched die with the exact bevel/limit settings this test expects
+    and comparing its resulting vertex/face count against what
+    export_asset actually produced on the first die -- rather than
+    hardcoding an expected vertex/face count as a magic number disconnected
+    from the modifier settings themselves. Also confirms the result does
+    NOT match a plain 1-segment chamfer's count, so a regression back to
+    the old default wouldn't slip through by coincidence.
+    """
+    import bpy
+    import math
+    from dice_gen import geometry, materials, exporter
+
+    size_mm = 16.0
+    bevel_fraction = 0.04
+
+    obj = geometry.build_die_base_mesh("d6", size_mm=size_mm)
+    mat = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
+    materials.apply_material(obj, mat)
+
+    with tempfile.TemporaryDirectory() as outdir:
+        record = {"asset_id": "test_fillet", "die_type": "d6"}
+        exporter.export_asset(obj, record, outdir, bevel_fraction=bevel_fraction, size_mm=size_mm)
+
+    actual_verts = len(obj.data.vertices)
+    actual_polys = len(obj.data.polygons)
+
+    reference_obj = geometry.build_die_base_mesh("d6", size_mm=size_mm)
+    ref_mod = reference_obj.modifiers.new(name="Bevel", type='BEVEL')
+    ref_mod.width = size_mm * bevel_fraction
+    ref_mod.segments = 8
+    ref_mod.limit_method = 'ANGLE'
+    ref_mod.angle_limit = math.radians(35)
+    bpy.context.view_layer.objects.active = reference_obj
+    bpy.ops.object.modifier_apply(modifier=ref_mod.name)
+
+    expected_verts = len(reference_obj.data.vertices)
+    expected_polys = len(reference_obj.data.polygons)
+
+    assert actual_verts == expected_verts, (
+        f"expected {expected_verts} verts (8-segment fillet reference), "
+        f"got {actual_verts} -- if this matches a 1-segment chamfer's "
+        f"count instead, segments=8 was not applied"
+    )
+    assert actual_polys == expected_polys, (
+        f"expected {expected_polys} polys (8-segment fillet reference), "
+        f"got {actual_polys}"
+    )
+
+    single_segment_obj = geometry.build_die_base_mesh("d6", size_mm=size_mm)
+    chamfer_mod = single_segment_obj.modifiers.new(name="Bevel", type='BEVEL')
+    chamfer_mod.width = size_mm * bevel_fraction
+    chamfer_mod.limit_method = 'ANGLE'
+    chamfer_mod.angle_limit = math.radians(35)
+    bpy.context.view_layer.objects.active = single_segment_obj
+    bpy.ops.object.modifier_apply(modifier=chamfer_mod.name)
+    chamfer_polys = len(single_segment_obj.data.polygons)
+
+    assert actual_polys != chamfer_polys, (
+        f"exported die's face count ({actual_polys}) matches a plain "
+        f"1-segment chamfer's count ({chamfer_polys}) -- segments=8 fillet "
+        f"was not actually applied"
+    )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+    bpy.data.objects.remove(reference_obj, do_unlink=True)
+    bpy.data.objects.remove(single_segment_obj, do_unlink=True)
+
+
+def test_save_blend_copy_sets_every_view3d_to_material_preview_shading():
+    """
+    _save_blend_copy must set every VIEW_3D viewport's shading to Material
+    Preview before saving, so opening the resulting .blend immediately
+    shows full color/texture/material regardless of which of Blender's
+    default workspace tabs (Layout, Modeling, Shading, etc.) is active --
+    without this, Blender's default "Solid" shading mode doesn't evaluate
+    the shader node graph at all (materials.py's diffuse_color fix handles
+    Solid mode's own separate fallback color; this handles making Material
+    Preview the default instead, so textures show too).
+    """
+    import bpy
+    from dice_gen import geometry, materials, exporter
+
+    obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
+    mat = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
+    materials.apply_material(obj, mat)
+
+    with tempfile.TemporaryDirectory() as outdir:
+        record = {"asset_id": "test_shading", "die_type": "d6"}
+        exporter.export_asset(obj, record, outdir, bevel_fraction=0.04, size_mm=16.0)
+
+    view3d_spaces = [
+        space
+        for screen in bpy.data.screens
+        for area in screen.areas
+        if area.type == 'VIEW_3D'
+        for space in area.spaces
+        if space.type == 'VIEW_3D'
+    ]
+    assert view3d_spaces, "expected at least one VIEW_3D space to check"
+    for space in view3d_spaces:
+        assert space.shading.type == 'MATERIAL', (
+            f"expected every VIEW_3D viewport's shading.type to be "
+            f"'MATERIAL' after export_asset, got {space.shading.type!r}"
+        )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_export_asset_writes_usd_manifest_and_thumbnail()
     test_export_asset_blend_file_contains_only_the_die_object()
     test_export_asset_blend_files_do_not_accumulate_across_multiple_exports()
+    test_export_asset_saves_blend_before_usd_and_stl_export()
+    test_export_asset_uses_fillet_segments_not_flat_chamfer()
+    test_save_blend_copy_sets_every_view3d_to_material_preview_shading()
 
 
 run_and_report(run)
