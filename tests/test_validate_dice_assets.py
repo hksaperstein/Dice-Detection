@@ -68,6 +68,51 @@ def test_validate_does_not_flag_empty_engraving_warnings(tmp_path):
     assert errors == []
 
 
+def test_validate_flags_missing_blend_file(tmp_path):
+    _write_manifest(tmp_path, [{
+        "asset_id": "a1", "die_type": "d6", "num_sides": 6,
+        "usd_path": "a1.usd", "thumbnail_path": "a1_thumb.png",
+        "blend_path": "a1.blend", "stl_path": "a1.stl",
+    }])
+    open(os.path.join(tmp_path, "a1.usd"), "w").write("x")
+    open(os.path.join(tmp_path, "a1_thumb.png"), "w").close()
+    open(os.path.join(tmp_path, "a1.stl"), "w").write("x")
+    # a1.blend deliberately not created
+
+    errors = validate(str(tmp_path))
+    assert any("missing .blend file" in e for e in errors), errors
+
+
+def test_validate_flags_missing_stl_file(tmp_path):
+    _write_manifest(tmp_path, [{
+        "asset_id": "a1", "die_type": "d6", "num_sides": 6,
+        "usd_path": "a1.usd", "thumbnail_path": "a1_thumb.png",
+        "blend_path": "a1.blend", "stl_path": "a1.stl",
+    }])
+    open(os.path.join(tmp_path, "a1.usd"), "w").write("x")
+    open(os.path.join(tmp_path, "a1_thumb.png"), "w").close()
+    open(os.path.join(tmp_path, "a1.blend"), "w").write("x")
+    # a1.stl deliberately not created
+
+    errors = validate(str(tmp_path))
+    assert any("missing STL file" in e for e in errors), errors
+
+
+def test_validate_passes_when_blend_and_stl_present(tmp_path):
+    _write_manifest(tmp_path, [{
+        "asset_id": "a1", "die_type": "d6", "num_sides": 6,
+        "usd_path": "a1.usd", "thumbnail_path": "a1_thumb.png",
+        "blend_path": "a1.blend", "stl_path": "a1.stl",
+    }])
+    open(os.path.join(tmp_path, "a1.usd"), "w").write("x")
+    open(os.path.join(tmp_path, "a1_thumb.png"), "w").close()
+    open(os.path.join(tmp_path, "a1.blend"), "w").write("x")
+    open(os.path.join(tmp_path, "a1.stl"), "w").write("x")
+
+    errors = validate(str(tmp_path))
+    assert errors == []
+
+
 def test_validate_passes_for_well_formed_manifest():
     import tempfile
     with tempfile.TemporaryDirectory() as tmp_path:

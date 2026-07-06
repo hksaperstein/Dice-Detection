@@ -41,6 +41,22 @@ def validate(outdir):
         for warning in record.get("engraving_warnings") or []:
             errors.append(f"{asset_id}: {warning}")
 
+        blend_rel_path = record.get("blend_path")
+        if blend_rel_path:
+            blend_path = os.path.join(outdir, blend_rel_path)
+            if not os.path.exists(blend_path):
+                errors.append(f"{asset_id}: missing .blend file {blend_path}")
+            elif os.path.getsize(blend_path) == 0:
+                errors.append(f"{asset_id}: empty .blend file {blend_path}")
+
+        stl_rel_path = record.get("stl_path")
+        if stl_rel_path:
+            stl_path = os.path.join(outdir, stl_rel_path)
+            if not os.path.exists(stl_path):
+                errors.append(f"{asset_id}: missing STL file {stl_path}")
+            elif os.path.getsize(stl_path) == 0:
+                errors.append(f"{asset_id}: empty STL file {stl_path}")
+
     sets = defaultdict(list)
     for record in manifest:
         set_id = record.get("set_id")
