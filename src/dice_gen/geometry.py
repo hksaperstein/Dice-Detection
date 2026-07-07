@@ -115,6 +115,18 @@ def build_die_base_mesh(die_type, size_mm):
             f"got {n_faces} faces / {n_verts} verts"
         )
 
+    # Mark every structural edge of the pristine polyhedron before any
+    # engraving cut ever runs -- see exporter.export_asset's Bevel modifier
+    # (limit_method='WEIGHT') for why this must happen here rather than
+    # right before bevel: boolean DIFFERENCE cuts don't rebuild untouched
+    # edges away from the cut, so this weight survives every cut intact,
+    # letting the eventual bevel round only the die's real structural
+    # edges and never the many similarly-steep-angled edges an engraved
+    # numeral's recess introduces.
+    bevel_layer = bm.edges.layers.float.new('bevel_weight_edge')
+    for e in bm.edges:
+        e[bevel_layer] = 1.0
+
     mesh = bpy.data.meshes.new(f"{die_type}_mesh")
     bm.to_mesh(mesh)
     bm.free()
