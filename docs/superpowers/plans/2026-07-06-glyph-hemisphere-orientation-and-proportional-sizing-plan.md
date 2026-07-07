@@ -51,7 +51,6 @@ def test_compute_face_poles_maps_every_d8_and_d10_face_to_exactly_one_pole():
     """
     import bpy
     from dice_gen import geometry
-    from mathutils import Vector
 
     for die_type in ("d8", "d10"):
         obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
@@ -67,7 +66,7 @@ def test_compute_face_poles_maps_every_d8_and_d10_face_to_exactly_one_pole():
             f"{die_type}: expected exactly 2 distinct pole positions, got "
             f"{distinct_poles}"
         )
-        zs = sorted(v.z for v in distinct_poles and [Vector(p) for p in distinct_poles])
+        zs = sorted(p[2] for p in distinct_poles)
         assert zs[0] < 0 < zs[1], f"{die_type}: expected one pole above and one below the origin, got {zs}"
 
         bpy.data.objects.remove(obj, do_unlink=True)
