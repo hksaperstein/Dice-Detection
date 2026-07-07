@@ -136,6 +136,63 @@ def test_compute_face_poles_returns_none_for_non_bipyramid_dice():
         bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_assign_values_to_opposite_pairs_splits_d8_and_d10_hemispheres_by_parity():
+    """
+    Regression test for a confirmed real bug: independent of the
+    orientation fix (see test_glyphs.py), the face-to-value assignment
+    itself did not consistently put odd values on one pole and even on
+    the other -- verified empirically this session (d8's current
+    assignment split 2-odd/2-even on EACH pole, not a clean split).
+    Fixing orientation alone does not produce the real mirrored-hemisphere
+    pattern if the same face's value could be either parity from one
+    asset to the next.
+    """
+    import bpy
+    from dice_gen import geometry, numbering
+
+    for die_type in ("d8", "d10"):
+        obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
+        poles = geometry.compute_face_poles(obj, die_type)
+        top_pole = max((p.z, tuple(p)) for p in poles.values())[1]
+
+        hemisphere_of_face = {
+            face_idx: ("top" if tuple(pole) == top_pole else "bottom")
+            for face_idx, pole in poles.items()
+        }
+
+        face_pairs = geometry.compute_opposite_face_pairs(obj)
+        assignment = numbering.assign_values_to_opposite_pairs(
+            die_type, face_pairs, hemisphere_of_face=hemisphere_of_face,
+        )
+        assert numbering.verify_opposite_sum(die_type, face_pairs, assignment)
+
+        top_parities = {assignment[f] % 2 for f, h in hemisphere_of_face.items() if h == "top"}
+        bottom_parities = {assignment[f] % 2 for f, h in hemisphere_of_face.items() if h == "bottom"}
+        assert len(top_parities) == 1, f"{die_type}: top hemisphere has mixed parities {top_parities}"
+        assert len(bottom_parities) == 1, f"{die_type}: bottom hemisphere has mixed parities {bottom_parities}"
+        assert top_parities != bottom_parities, f"{die_type}: top and bottom ended up with the same parity"
+
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_assign_values_to_opposite_pairs_without_hemisphere_arg_is_unchanged():
+    """
+    Every other die type (and any caller not passing hemisphere_of_face)
+    must keep today's exact assignment behavior -- this plan only adds an
+    opt-in path for d8/d10.
+    """
+    import bpy
+    from dice_gen import geometry, numbering
+
+    for die_type in ("d4", "d6", "d12", "d20"):
+        obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
+        face_pairs = geometry.compute_opposite_face_pairs(obj)
+        before = numbering.assign_values_to_opposite_pairs(die_type, face_pairs)
+        after = numbering.assign_values_to_opposite_pairs(die_type, face_pairs, hemisphere_of_face=None)
+        assert before == after
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_all_six_dice_build_with_correct_topology()
     test_opposite_face_pairs_are_geometrically_antiparallel_for_d6()
@@ -143,6 +200,8 @@ def run():
     test_build_die_base_mesh_marks_all_edges_with_full_bevel_weight()
     test_compute_face_poles_maps_every_d8_and_d10_face_to_exactly_one_pole()
     test_compute_face_poles_returns_none_for_non_bipyramid_dice()
+    test_assign_values_to_opposite_pairs_splits_d8_and_d10_hemispheres_by_parity()
+    test_assign_values_to_opposite_pairs_without_hemisphere_arg_is_unchanged()
 
 
 run_and_report(run)

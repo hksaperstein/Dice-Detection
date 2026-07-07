@@ -75,7 +75,17 @@ def _generate_from_params(asset_id, params, outdir):
     die_obj = geometry.build_die_base_mesh(params.die_type, params.size_mm)
 
     face_pairs = geometry.compute_opposite_face_pairs(die_obj)
-    assignment = numbering.assign_values_to_opposite_pairs(params.die_type, face_pairs)
+    poles = geometry.compute_face_poles(die_obj, params.die_type)
+    hemisphere_of_face = None
+    if poles is not None:
+        top_pole_z = max(p.z for p in poles.values())
+        hemisphere_of_face = {
+            face_idx: ("top" if pole.z == top_pole_z else "bottom")
+            for face_idx, pole in poles.items()
+        }
+    assignment = numbering.assign_values_to_opposite_pairs(
+        params.die_type, face_pairs, hemisphere_of_face=hemisphere_of_face,
+    )
     if not numbering.verify_opposite_sum(params.die_type, face_pairs, assignment):
         raise ValueError(f"{asset_id}: numbering invariant failed for {params.die_type}")
 
