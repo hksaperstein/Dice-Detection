@@ -205,3 +205,32 @@ def compute_face_poles(obj, die_type):
                 f"relies on doesn't hold for this mesh"
             )
     return poles
+
+
+def compute_face_inradius(mesh, face, obj_matrix):
+    """
+    World-space distance from face's centroid to the nearest of its
+    edges (treated as infinite lines -- for a point at a convex polygon's
+    centroid, this equals the true minimum distance to the polygon
+    boundary). Used by glyphs.py to size engraved/decal numerals
+    proportionally to each die type's actual face size, instead of one
+    fixed fraction of the die's overall size_mm -- confirmed this
+    session that face inradius varies nearly 2.5x across die types at
+    the same size_mm (3.674mm for d8 vs 9.0mm for d6, at size_mm=18.0),
+    so a single fixed fraction cannot be well-proportioned for every die
+    type at once.
+    """
+    center = obj_matrix @ face.center
+    verts_world = [obj_matrix @ mesh.vertices[i].co for i in face.vertices]
+    n = len(verts_world)
+    min_dist = None
+    for i in range(n):
+        a = verts_world[i]
+        b = verts_world[(i + 1) % n]
+        edge_dir = (b - a).normalized()
+        proj = (center - a).dot(edge_dir)
+        closest = a + edge_dir * proj
+        dist = (center - closest).length
+        if min_dist is None or dist < min_dist:
+            min_dist = dist
+    return min_dist

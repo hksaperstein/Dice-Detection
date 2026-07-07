@@ -1516,21 +1516,45 @@ def test_render_label_to_image_renders_three_corner_copies_for_d4():
     see _render_label_to_image's d4 branch for the full explanation).
     Confirmed empirically by rendering this exact layout and scanning the
     raw pixel buffer row-by-row: ink forms two clearly separated clusters
-    with a wide gap between them, top cluster at rows ~160-192 (the apex
-    copy) and bottom cluster at rows ~64-92 (the two base copies, whose
-    column ranges partially overlap in the upper half of that cluster
-    but stay clearly separated -- left col <=86, right col >=170 -- in
-    the lower half used here).
+    with a wide gap between them, top cluster at rows ~140-214 (the apex
+    copy) and bottom cluster at rows ~44-115 (the two base copies, which
+    stay clearly separated from each other at every row in this range --
+    left cluster columns stay <=108, right cluster columns stay >=148).
+
+    The "no ink at center" region was re-measured (not guessed) after
+    task 5 (face-geometry-proportional glyph sizing) made this d4 face's
+    glyphs noticeably larger than before (d4's own face inradius is
+    large relative to size_mm -- 7.35mm of 18.0mm, ratio 0.408 -- second
+    only to d6's 0.5, so d4's corner numerals grew the most of any die
+    type under the new proportional sizing): the apex copy's glyph now
+    extends down to row ~138, which overlaps the OLD center-check box's
+    row range (108-148). Rendering this exact case
+    (glyph_style="arabic_numerals", value=3, die_type="d4", real d4
+    inradius/size_mm=18.0 fed through _proportional_font_size +
+    DECAL_FONT_CANVAS_SCALE) and scanning the actual pixel buffer found
+    rows 116-137 are the true, fully-empty gap between the two clusters
+    at every column -- the new center-check box (119-135, 96-160) sits
+    comfortably inside that measured gap with margin on every side. The
+    other three regions (top/bottom-left/bottom-right corner ink)
+    verified unchanged against the new render and did not need updating.
     """
     import bpy
     import numpy as np
-    from dice_gen import glyphs
+    from dice_gen import geometry, glyphs
 
     resolution = 256
+    size_mm = 18.0
+    d4_obj = geometry.build_die_base_mesh("d4", size_mm=size_mm)
+    inradius = geometry.compute_face_inradius(
+        d4_obj.data, d4_obj.data.polygons[0], d4_obj.matrix_world
+    )
+    bpy.data.objects.remove(d4_obj, do_unlink=True)
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         image_path = os.path.join(tmp_dir, "test_d4_corners.png")
         glyphs._render_label_to_image(
             3, "arabic_numerals", "font_sans_bold", "d4", image_path, resolution=resolution,
+            inradius=inradius, size_mm=size_mm,
         )
 
         img = bpy.data.images.load(image_path)
@@ -1542,9 +1566,9 @@ def test_render_label_to_image_renders_three_corner_copies_for_d4():
         def region_has_ink(y0, y1, x0, x1):
             return bool((alpha[y0:y1, x0:x1] > 0.05).any())
 
-        assert not region_has_ink(108, 148, 108, 148), (
-            "expected NO ink in the exact center -- a 3-corner layout "
-            "should leave the center empty"
+        assert not region_has_ink(119, 135, 96, 160), (
+            "expected NO ink in the measured gap between the apex and "
+            "base copies -- a 3-corner layout should leave this band empty"
         )
         assert region_has_ink(150, 200, 100, 160), "expected ink near the top corner"
         assert region_has_ink(55, 95, 40, 100), "expected ink near the bottom-left corner"
@@ -1795,8 +1819,32 @@ def test_unwrap_faces_to_full_square_mirrors_between_d8_hemispheres():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_proportional_font_size_shrinks_for_longer_labels():
+    """
+    Calibrated this session against the real worst cases (d8 single
+    digit, d20 2-digit arabic, d20 5-character roman numeral "XVIII"):
+    BASE_FRACTION=0.5, EXTRA_CHAR_FACTOR=0.35 -- reduced per-cut
+    non-manifold-junction counts from the hundreds/thousands down to
+    single/low-double digits (the small remainder matches this file's
+    already-documented inherent EXACT-solver imperfections, not a sizing
+    defect -- see _boolean_diff_apply's docstring). This test only
+    anchors the shrink-with-length behavior the calibration depends on,
+    not the exact calibrated constants themselves.
+    """
+    from dice_gen.glyphs import _proportional_font_size
+
+    inradius = 5.0
+    size_1_char = _proportional_font_size(inradius, "8")
+    size_2_char = _proportional_font_size(inradius, "20")
+    size_5_char = _proportional_font_size(inradius, "XVIII")
+
+    assert size_1_char > size_2_char > size_5_char
+    assert size_1_char == inradius * 0.5
+
+
 def run():
     test_glyph_label_formats()
+    test_proportional_font_size_shrinks_for_longer_labels()
     test_engraved_glyphs_reduce_solid_volume()
     test_engraved_glyphs_blank_fill_does_not_add_second_material()
     test_decal_glyphs_assigns_one_material_per_face()

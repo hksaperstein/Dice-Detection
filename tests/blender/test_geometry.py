@@ -193,6 +193,58 @@ def test_assign_values_to_opposite_pairs_without_hemisphere_arg_is_unchanged():
         bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_compute_face_inradius_matches_known_values_for_a_cube():
+    """
+    For a d6 (cube) of size_mm=18.0 (half-extent 9.0), each square face's
+    inradius (centroid to nearest edge) is exactly half the face's own
+    edge length, which for this cube construction equals the half-extent
+    itself: 9.0. This is the simplest checkable case (a cube's face
+    inradius is trivial to state exactly), used as the basic correctness
+    check before this helper is trusted for the less-trivial polyhedra.
+    """
+    import bpy
+    from dice_gen import geometry
+
+    obj = geometry.build_die_base_mesh("d6", size_mm=18.0)
+    for face in obj.data.polygons:
+        inradius = geometry.compute_face_inradius(obj.data, face, obj.matrix_world)
+        assert abs(inradius - 9.0) < 1e-4, f"expected inradius 9.0, got {inradius}"
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_compute_face_inradius_is_smaller_for_d8_and_d20_than_d6_and_d12_at_same_size():
+    """
+    Regression anchor for the real bug this task fixes: at the same
+    size_mm, d8/d20 have much smaller individual faces than d6/d12
+    (confirmed empirically this session: inradius 3.674/5.196mm vs
+    9.0/7.656mm at size_mm=18.0) -- yet the OLD code used one fixed
+    font-size fraction of size_mm for every die type, oversizing glyphs
+    on the small-faced dice (contributing to boolean-cut mesh-quality
+    defects) and undersizing them on the large-faced ones (illegible
+    numerals, e.g. d4's vertex copies). This test only anchors the
+    geometric fact the fix depends on, not the fix itself.
+    """
+    import bpy
+    from dice_gen import geometry
+
+    size_mm = 18.0
+    small_faced = {}
+    large_faced = {}
+    for die_type in ("d8", "d20"):
+        obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+        small_faced[die_type] = geometry.compute_face_inradius(obj.data, obj.data.polygons[0], obj.matrix_world)
+        bpy.data.objects.remove(obj, do_unlink=True)
+    for die_type in ("d6", "d12"):
+        obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+        large_faced[die_type] = geometry.compute_face_inradius(obj.data, obj.data.polygons[0], obj.matrix_world)
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+    assert max(small_faced.values()) < min(large_faced.values()), (
+        f"expected d8/d20 inradius ({small_faced}) to be smaller than "
+        f"d6/d12 inradius ({large_faced}) at the same size_mm"
+    )
+
+
 def run():
     test_all_six_dice_build_with_correct_topology()
     test_opposite_face_pairs_are_geometrically_antiparallel_for_d6()
@@ -202,6 +254,8 @@ def run():
     test_compute_face_poles_returns_none_for_non_bipyramid_dice()
     test_assign_values_to_opposite_pairs_splits_d8_and_d10_hemispheres_by_parity()
     test_assign_values_to_opposite_pairs_without_hemisphere_arg_is_unchanged()
+    test_compute_face_inradius_matches_known_values_for_a_cube()
+    test_compute_face_inradius_is_smaller_for_d8_and_d20_than_d6_and_d12_at_same_size()
 
 
 run_and_report(run)

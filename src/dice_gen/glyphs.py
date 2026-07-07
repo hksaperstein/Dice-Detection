@@ -12,10 +12,31 @@ import bmesh
 import numpy as np
 from mathutils import Vector, Matrix
 
-from .geometry import compute_face_poles
+from .geometry import compute_face_poles, compute_face_inradius
 
 ENGRAVE_DEPTH_FRACTION = 0.03
-D4_CORNER_GLYPH_FONT_SIZE_FRACTION = 0.13
+FONT_INRADIUS_FRACTION = 0.5
+FONT_EXTRA_CHAR_SHRINK = 0.35
+
+# _render_label_to_image renders into a fixed, dimensionless orthographic
+# camera setup (ortho_scale=1.4) shared by every die type -- it never sees
+# real mm dimensions, since _unwrap_faces_to_full_square already normalizes
+# each face's own UV island to fill the same square regardless of the
+# face's real size. So face-shape proportionality here comes from
+# inradius/size_mm (a dimensionless per-die-type ratio -- 0.5 for d6, ~0.2
+# for d8/d10, matching the same shape variation _proportional_font_size
+# corrects for in the engraved path), not from inradius alone. This
+# constant rescales that ratio into this function's local text-size units.
+# Calibrated so a single-character label on a d6 face (inradius/size_mm ==
+# 0.5, the largest ratio of any die type) reproduces this path's old fixed
+# default of 1.0 exactly (0.5 * FONT_INRADIUS_FRACTION * 4.0 == 1.0),
+# anchoring the new proportional sizing to the one old value most likely to
+# have already been visually reasonable, while every smaller-faced die type
+# and every longer label now correctly renders smaller than that anchor
+# instead of at the same fixed size. Verified by rendering
+# test_render_label_to_image_renders_three_corner_copies_for_d4 with real
+# d4 geometry and inspecting the resulting ink regions (see that test).
+DECAL_FONT_CANVAS_SCALE = 4.0
 
 FONT_FILES = {
     "font_sans_bold": "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -93,6 +114,20 @@ def glyph_label(value, glyph_style):
     if glyph_style == "cjk_numerals":
         return CJK_NUMERALS.get(value, str(value))
     raise ValueError(f"glyph_label not applicable to style {glyph_style!r}")
+
+
+def _proportional_font_size(inradius, label):
+    """
+    Calibrated this session (FONT_INRADIUS_FRACTION=0.5,
+    FONT_EXTRA_CHAR_SHRINK=0.35) against the real worst cases across
+    every die type/glyph style combination -- see
+    test_proportional_font_size_shrinks_for_longer_labels. Longer labels
+    (e.g. d20's 2-digit arabic numerals, or "XVIII" for roman numeral 18)
+    need a smaller per-character size to occupy roughly the same total
+    footprint as a single-character label at the same font size would.
+    """
+    n = len(label)
+    return inradius * FONT_INRADIUS_FRACTION / (1 + (n - 1) * FONT_EXTRA_CHAR_SHRINK)
 
 
 def _tangent_bitangent(normal, up_reference=None, threshold=0.999):
@@ -519,15 +554,11 @@ def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.55):
 def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill, font_id, size_mm):
     depth = size_mm * ENGRAVE_DEPTH_FRACTION
     is_d4_vertex_numerals = die_type == "d4" and glyph_style != "pips"
-    glyph_font_size = (
-        size_mm * D4_CORNER_GLYPH_FONT_SIZE_FRACTION if is_d4_vertex_numerals
-        else size_mm * 0.18
-    )
     warnings = []
 
-    # Phase 1: compute every cut's (value, orientation) against the PRISTINE
-    # mesh, entirely before any boolean modifier is applied. Each
-    # bpy.ops.object.modifier_apply call below rebuilds die_obj.data's
+    # Phase 1: compute every cut's (value, orientation, font_size) against
+    # the PRISTINE mesh, entirely before any boolean modifier is applied.
+    # Each bpy.ops.object.modifier_apply call below rebuilds die_obj.data's
     # topology (reindexing/reordering polygons), so face_index values from
     # `assignment` (captured once upfront by geometry.compute_opposite_face_pairs)
     # must never be re-resolved against die_obj.data.polygons after a cut.
@@ -537,21 +568,39 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
     # stay inside Phase 1 (computed entirely against the pristine mesh):
     # recomputing face.vertices/face.normal mid-loop, after an earlier cut
     # has already rebuilt the mesh topology, causes a Blender crash.
+    #
+    # font_size is also computed here, per cut, rather than once for the
+    # whole die: it depends on this face's own inradius (which varies
+    # nearly 2.5x across die types at the same size_mm -- see
+    # geometry.compute_face_inradius) AND this cut's own label length (see
+    # _proportional_font_size), so one fixed size for the whole die can
+    # never be well-proportioned for every face/label combination at once.
+    # Computing it here, against the pristine mesh, and carrying it
+    # through in the planned_cuts tuple (rather than carrying face_index
+    # and recomputing in Phase 2) avoids re-indexing die_obj.data.polygons
+    # after a cut has already rebuilt the mesh topology.
     face_poles = compute_face_poles(die_obj, die_type)
     planned_cuts = []
     for face_index, value in assignment.items():
         face = die_obj.data.polygons[face_index]
+        if glyph_style == "pips":
+            font_size = None
+        else:
+            inradius = compute_face_inradius(die_obj.data, face, die_obj.matrix_world)
+            label = glyph_label(value, glyph_style)
+            font_size = _proportional_font_size(inradius, label)
         if is_d4_vertex_numerals:
             for orient in _face_vertex_orientations(die_obj.data, face, die_obj.matrix_world):
-                planned_cuts.append((value, orient))
+                planned_cuts.append((value, orient, font_size))
         else:
             pole_co = face_poles[face_index] if face_poles is not None else None
             orient = _face_orientation_matrix(face, die_obj.matrix_world, pole_world_co=pole_co)
-            planned_cuts.append((value, orient))
+            planned_cuts.append((value, orient, font_size))
 
     # Phase 2: build and apply each cutter using only the precomputed
-    # orientation matrices — no further indexing into die_obj.data.polygons.
-    for value, orient in planned_cuts:
+    # orientation matrices and font sizes — no further indexing into
+    # die_obj.data.polygons.
+    for value, orient, font_size in planned_cuts:
         if glyph_style == "pips":
             for (ox, oy) in PIP_VALUE_LAYOUTS.get(value, [(0, 0)]):
                 bpy.ops.mesh.primitive_uv_sphere_add(radius=size_mm * 0.05)
@@ -572,7 +621,7 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
                 txt_obj.data.font = font
             txt_obj.data.align_x = 'CENTER'
             txt_obj.data.align_y = 'CENTER'
-            txt_obj.data.size = glyph_font_size
+            txt_obj.data.size = font_size
             txt_obj.data.extrude = depth
             bpy.context.view_layer.objects.active = txt_obj
             bpy.ops.object.convert(target='MESH')
@@ -921,7 +970,16 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
 
     for face_index, value in assignment.items():
         image_path = os.path.join(tmp_dir, f"{asset_id}_face{face_index}.png")
-        _render_label_to_image(value, glyph_style, font_id, die_type, image_path, resolution=resolution)
+        # apply_decal_glyphs never applies a boolean modifier or otherwise
+        # mutates die_obj.data's topology (unlike apply_engraved_glyphs), so
+        # -- unlike that function's Phase 1/Phase 2 split -- indexing
+        # die_obj.data.polygons directly inside this per-face loop is safe.
+        face = die_obj.data.polygons[face_index]
+        inradius = compute_face_inradius(die_obj.data, face, die_obj.matrix_world)
+        _render_label_to_image(
+            value, glyph_style, font_id, die_type, image_path,
+            resolution=resolution, inradius=inradius, size_mm=size_mm,
+        )
 
         if base_mat is not None:
             mat = base_mat.copy()
@@ -955,7 +1013,25 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
         die_obj.data.polygons[face_index].material_index = len(die_obj.data.materials) - 1
 
 
-def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, resolution=256):
+def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, resolution=256,
+                            inradius=None, size_mm=None):
+    """
+    `inradius` (this face's world-space inradius, mm -- see
+    geometry.compute_face_inradius) and `size_mm` (the die's overall
+    size) are only required for the non-"pips" branches below (pips are
+    circle primitives with a fixed local radius, unaffected by font
+    sizing). Both are combined into a dimensionless inradius/size_mm
+    ratio before being handed to the shared `_proportional_font_size`
+    helper, then rescaled into this function's own local text-size units
+    by DECAL_FONT_CANVAS_SCALE -- see that constant's docstring for why
+    a ratio (not the raw mm inradius) is the right input here: this
+    function's camera/canvas setup is fixed and dimensionless (the same
+    for every die type), with per-face real-world scale already
+    normalized away by apply_decal_glyphs's prior call to
+    _unwrap_faces_to_full_square, so only the face's SHAPE (how its
+    inradius compares to its own die's overall size) remains meaningful
+    here, not its absolute mm size.
+    """
     scene = bpy.data.scenes.new("dice_gen_decal_tmp")
     scene.render.engine = 'BLENDER_EEVEE'
     scene.render.resolution_x = resolution
@@ -1026,6 +1102,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
         # during this fix: all three copies now appear at the face's
         # actual three corners.
         label = glyph_label(value, glyph_style)
+        font_size = _proportional_font_size(inradius / size_mm, label) * DECAL_FONT_CANVAS_SCALE
         ortho_scale = 1.4
         inset = 0.55
         half_width = 0.4
@@ -1042,7 +1119,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
                 txt_obj.data.font = font
             txt_obj.data.align_x = 'CENTER'
             txt_obj.data.align_y = 'CENTER'
-            txt_obj.data.size = 0.35
+            txt_obj.data.size = font_size
             # Rotate so this copy's "up" points radially outward toward
             # its own corner (the apex, straight up, needs zero rotation
             # since text already reads "up" by default).
@@ -1052,6 +1129,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
             glyph_objs.append(txt_obj)
     else:
         label = glyph_label(value, glyph_style)
+        font_size = _proportional_font_size(inradius / size_mm, label) * DECAL_FONT_CANVAS_SCALE
         bpy.ops.object.text_add(location=(0, 0, 0))
         txt_obj = bpy.context.active_object
         txt_obj.data.body = label
@@ -1060,7 +1138,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
             txt_obj.data.font = font
         txt_obj.data.align_x = 'CENTER'
         txt_obj.data.align_y = 'CENTER'
-        txt_obj.data.size = 1.0
+        txt_obj.data.size = font_size
         bpy.context.collection.objects.unlink(txt_obj)
         scene.collection.objects.link(txt_obj)
         glyph_objs.append(txt_obj)
