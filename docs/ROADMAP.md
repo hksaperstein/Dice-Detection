@@ -23,6 +23,8 @@ Direct user feedback, verbatim intent preserved. None of these are fixed yet —
 
 7. **"You can probably do more Blender Python research and learning."** General feedback to invest more in researching established Blender/bpy techniques (via delegating-technical-research) before ad-hoc trial-and-error, especially for: text-on-mesh/boolean-cut best practices, robust normal-consistency handling for multi-boundary meshes (see the recalc_face_normals recurrence noted in memory), and material/shader authoring patterns for procedural 2-tone/patterned fills.
 
+8. **Add a 6-vs-9 disambiguation indicator.** Real dice with arabic numerals mark 6 and 9 (a 180-degree rotation of each other, genuinely ambiguous on a die that can be read from any orientation) with an underline, a dot, or a serif/tail — this pipeline currently engraves/prints a bare "6"/"9" with no such indicator. Affects `arabic_numerals` on any die type whose value range includes both 6 and 9 (d10, d12, d20 — not d6/d8, which never reach 9). Needs a design decision (underline glyph appended to the label vs. a small separate mark placed under the digit) before implementation; check what real commercial dice actually do before picking one.
+
 ## Longer-term (from 2026-07-06 retrospective / CLAUDE.md)
 
 - The dice pipeline is a template for a broader synthetic-training-data mission (see repo `CLAUDE.md`). Any new capability built for dice (proportional sizing, orientation-from-topology, manifest-based defect tracking, multi-format export) should be written to generalize, not as a dice-only one-off.
