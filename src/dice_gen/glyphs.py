@@ -807,7 +807,23 @@ def _unwrap_faces_to_full_square(die_obj, margin=0.1):
             )
             other_v = sum(v for i, v in enumerate(vs_raw) if i != apex_index) / 2.0
             if vs_raw[apex_index] < other_v:
+                # Negate BOTH u and v (a 180-degree rotation about the
+                # face center) -- NOT v alone. Negating only v is a
+                # mirror reflection (determinant -1), which reverses
+                # winding/handedness and renders any text on that face
+                # backwards. Confirmed empirically: comparing the signed
+                # area of the raw (pre-normalization) UV triangle against
+                # the final one, the raw projection was ALREADY
+                # winding-consistent across every face of a d8 (all
+                # +86.603) -- a v-only flip made exactly the faces that
+                # needed apex correction flip sign too (mixed +/-0.277),
+                # proving it mirrors text on those faces alone. A 180
+                # degree rotation (negating both axes) corrects the
+                # apex-up/down orientation the exact same way (v still
+                # ends up negated) while preserving winding, since
+                # negating both coordinates has determinant +1.
                 for c in local_coords:
+                    c[0] = -c[0]
                     c[1] = -c[1]
 
         us = [c[0] for c in local_coords]

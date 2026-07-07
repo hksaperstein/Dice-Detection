@@ -1597,6 +1597,59 @@ def test_unwrap_faces_to_full_square_gives_d4_faces_consistent_apex_up_orientati
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_unwrap_faces_to_full_square_does_not_mirror_any_triangular_face():
+    """
+    Regression test for a severe bug in the apex-up fix above: the first
+    version of that fix corrected apex-down faces by negating ONLY v,
+    which is a MIRROR reflection (determinant -1), not a rotation --
+    reversing winding/handedness on exactly the faces that needed
+    correction, which would render any text on those faces backwards.
+    Confirmed empirically: the raw (pre-fix) tangent/bitangent projection
+    was ALREADY winding-consistent across every face of a d4/d8/d20 (all
+    positive signed area), but the v-only-negate fix produced a MIX of
+    positive and negative signed areas (exactly the faces it "corrected"
+    flipped sign), while a fixed version that negates BOTH u and v (a
+    proper 180-degree rotation, determinant +1) keeps every face's signed
+    area the same sign as every other face's, on every die type with
+    triangular faces (d4, d8, d20) -- not just the ones exercised by the
+    apex-up test above.
+
+    This checks the signed area (2D shoelace formula) of every
+    triangular face's final UV coordinates has the SAME sign as every
+    other triangular face's, for d4, d8, and d20.
+    """
+    import bpy
+    from dice_gen import geometry, glyphs
+
+    def signed_area(coords):
+        area = 0.0
+        n = len(coords)
+        for i in range(n):
+            x1, y1 = coords[i]
+            x2, y2 = coords[(i + 1) % n]
+            area += x1 * y2 - x2 * y1
+        return area / 2.0
+
+    for die_type, size_mm in (("d4", 16.0), ("d8", 20.0), ("d20", 20.0)):
+        obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+        glyphs._unwrap_faces_to_full_square(obj)
+
+        uv_layer = obj.data.uv_layers.active.data
+        signs = set()
+        for poly in obj.data.polygons:
+            coords = [(uv_layer[li].uv.x, uv_layer[li].uv.y) for li in poly.loop_indices]
+            signs.add(signed_area(coords) > 0)
+
+        assert len(signs) == 1, (
+            f"{die_type}: expected every triangular face's UV winding to "
+            f"have the SAME sign (no mirroring), but found faces with "
+            f"BOTH signs -- some faces are mirrored relative to others, "
+            f"which would render text backwards on the mirrored ones"
+        )
+
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
@@ -1628,6 +1681,7 @@ def run():
     test_apply_engraved_glyphs_does_not_triple_numerals_for_non_d4_dice()
     test_render_label_to_image_renders_three_corner_copies_for_d4()
     test_unwrap_faces_to_full_square_gives_d4_faces_consistent_apex_up_orientation()
+    test_unwrap_faces_to_full_square_does_not_mirror_any_triangular_face()
 
 
 run_and_report(run)
