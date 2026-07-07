@@ -4,6 +4,7 @@ Applies numerals/pips to a die's faces, either as real engraved geometry
 baked image per face). Both are real manufacturing conventions for TTRPG
 dice, so both are supported and randomly chosen per asset by sampler.py.
 """
+import math
 import os
 
 import bpy
@@ -824,7 +825,7 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
 
     for face_index, value in assignment.items():
         image_path = os.path.join(tmp_dir, f"{asset_id}_face{face_index}.png")
-        _render_label_to_image(value, glyph_style, font_id, image_path, resolution=resolution)
+        _render_label_to_image(value, glyph_style, font_id, die_type, image_path, resolution=resolution)
 
         if base_mat is not None:
             mat = base_mat.copy()
@@ -858,7 +859,7 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
         die_obj.data.polygons[face_index].material_index = len(die_obj.data.materials) - 1
 
 
-def _render_label_to_image(value, glyph_style, font_id, image_path, resolution=256):
+def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, resolution=256):
     scene = bpy.data.scenes.new("dice_gen_decal_tmp")
     scene.render.engine = 'BLENDER_EEVEE'
     scene.render.resolution_x = resolution
@@ -888,6 +889,38 @@ def _render_label_to_image(value, glyph_style, font_id, image_path, resolution=2
             bpy.context.collection.objects.unlink(dot)
             scene.collection.objects.link(dot)
             glyph_objs.append(dot)
+    elif die_type == "d4":
+        # Real commercial d4 dice (standard tetrahedra) show the same
+        # digit at all three corners of each face, oriented so whichever
+        # corner is "up" reads correctly -- see the vertex-read design
+        # doc. Every d4 face is a congruent equilateral triangle, so a
+        # fixed canonical 3-corner layout (not tied to this face's real
+        # 3D vertex positions) is sufficient: all three copies show the
+        # identical value, so exact per-vertex correspondence doesn't
+        # matter, only that each corner gets one correctly-outward-
+        # rotated copy. Angles/radius/size confirmed via render during
+        # planning to produce three non-overlapping, correctly-rotated
+        # copies within this function's existing camera framing.
+        label = glyph_label(value, glyph_style)
+        for angle_deg in (90, 210, 330):
+            angle = math.radians(angle_deg)
+            ox, oy = 0.5 * math.cos(angle), 0.5 * math.sin(angle)
+            bpy.ops.object.text_add(location=(ox, oy, 0))
+            txt_obj = bpy.context.active_object
+            txt_obj.data.body = label
+            font = _load_font(font_id, glyph_style)
+            if font is not None:
+                txt_obj.data.font = font
+            txt_obj.data.align_x = 'CENTER'
+            txt_obj.data.align_y = 'CENTER'
+            txt_obj.data.size = 0.42
+            # Rotate so this copy's "up" points radially outward toward
+            # its own corner (the top corner, angle_deg=90, needs zero
+            # rotation since text already reads "up" by default).
+            txt_obj.rotation_euler = (0, 0, angle - math.pi / 2)
+            bpy.context.collection.objects.unlink(txt_obj)
+            scene.collection.objects.link(txt_obj)
+            glyph_objs.append(txt_obj)
     else:
         label = glyph_label(value, glyph_style)
         bpy.ops.object.text_add(location=(0, 0, 0))

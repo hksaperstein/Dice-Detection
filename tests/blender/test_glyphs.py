@@ -1496,6 +1496,50 @@ def test_apply_engraved_glyphs_does_not_triple_numerals_for_non_d4_dice():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_render_label_to_image_renders_three_corner_copies_for_d4():
+    """
+    Real commercial d4 dice show the same digit at all three corners of
+    each face (see the vertex-read design doc). For die_type == "d4" and
+    a numeral glyph_style (not pips), _render_label_to_image must render
+    3 copies of the label near the image's three corners instead of 1
+    centered copy. Verified by checking for non-transparent ("ink")
+    pixels in three separate regions of the rendered image -- near the
+    top, bottom-left, and bottom-right -- and confirming there is NO ink
+    in the exact center (where a single centered copy would put it),
+    proving this is genuinely a 3-corner layout, not a coincidentally
+    large single copy that happens to touch all these regions. Region
+    boundaries were confirmed empirically during planning by rendering
+    this exact layout and inspecting the raw pixel buffer.
+    """
+    import bpy
+    import numpy as np
+    from dice_gen import glyphs
+
+    resolution = 256
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        image_path = os.path.join(tmp_dir, "test_d4_corners.png")
+        glyphs._render_label_to_image(
+            3, "arabic_numerals", "font_sans_bold", "d4", image_path, resolution=resolution,
+        )
+
+        img = bpy.data.images.load(image_path)
+        pixels = np.empty(resolution * resolution * 4, dtype=np.float32)
+        img.pixels.foreach_get(pixels)
+        alpha = pixels.reshape(resolution, resolution, 4)[:, :, 3]
+        bpy.data.images.remove(img)
+
+        def region_has_ink(y0, y1, x0, x1):
+            return bool((alpha[y0:y1, x0:x1] > 0.05).any())
+
+        assert not region_has_ink(108, 148, 108, 148), (
+            "expected NO ink in the exact center -- a 3-corner layout "
+            "should leave the center empty"
+        )
+        assert region_has_ink(190, 256, 90, 166), "expected ink near the top corner"
+        assert region_has_ink(0, 90, 10, 86), "expected ink near the bottom-left corner"
+        assert region_has_ink(0, 90, 170, 246), "expected ink near the bottom-right corner"
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
@@ -1525,6 +1569,7 @@ def run():
     test_apply_engraved_glyphs_cuts_three_corners_per_face_for_d4_numerals()
     test_apply_engraved_glyphs_does_not_triple_pips_for_d4()
     test_apply_engraved_glyphs_does_not_triple_numerals_for_non_d4_dice()
+    test_render_label_to_image_renders_three_corner_copies_for_d4()
 
 
 run_and_report(run)
