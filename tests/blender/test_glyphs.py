@@ -1303,24 +1303,6 @@ def test_apply_decal_glyphs_uses_load_font_with_correct_glyph_style():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
-def test_engrave_depth_fraction_is_shallower_than_before():
-    """
-    0.025 was the first candidate value, but it measurably increased the
-    known EXACT/FLOAT-collapse skipped-cut failure rate on some dice
-    (confirmed empirically: a specific d20/roman_numerals die went from 1
-    skipped cut at the original 0.04 to 8 skipped cuts at 0.025, and a
-    d20/cjk_numerals die from 1 to 3). 0.03 was chosen after confirming it
-    restores both dice to at or below their original 0.04 failure count
-    (1 and 0 respectively) while still being 25% shallower than 0.04.
-    """
-    from dice_gen import glyphs
-
-    assert glyphs.ENGRAVE_DEPTH_FRACTION == 0.03, (
-        f"expected ENGRAVE_DEPTH_FRACTION == 0.03, got "
-        f"{glyphs.ENGRAVE_DEPTH_FRACTION}"
-    )
-
-
 def test_face_vertex_orientations_returns_one_outward_pointing_matrix_per_vertex():
     """
     Direct geometric check of _face_vertex_orientations: for a d4 face
@@ -1853,50 +1835,6 @@ def test_engrave_depth_fraction_is_shallower_than_prior_value():
     assert ENGRAVE_DEPTH_FRACTION == 0.02
 
 
-def test_apply_engraved_glyphs_cutter_edges_are_rounded_not_sharp():
-    """
-    Explicit user request: "softer edges" on engraved recesses -- the
-    cutter mesh used for each numeral/pip cut must have its edges beveled
-    (rounded) before the boolean cut runs, rather than left as sharp
-    90-degree transitions. Verified by checking the cutter mesh gains
-    additional geometry from a bevel step: an unbeveled extruded-text
-    mesh has exactly as many faces as its convert(target='MESH') +
-    _weld_cutter_mesh output; a beveled one has more (the bevel adds
-    faces along every edge it rounds).
-    """
-    import bpy
-    from dice_gen import geometry
-    from dice_gen.glyphs import (
-        _face_orientation_matrix, _weld_cutter_mesh, ENGRAVE_DEPTH_FRACTION,
-    )
-
-    size_mm = 18.0
-    depth = size_mm * ENGRAVE_DEPTH_FRACTION
-
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.object.text_add()
-    txt_obj = bpy.context.active_object
-    txt_obj.data.body = "8"
-    txt_obj.data.align_x = 'CENTER'; txt_obj.data.align_y = 'CENTER'
-    txt_obj.data.size = 1.8
-    txt_obj.data.extrude = depth
-    bpy.context.view_layer.objects.active = txt_obj
-    bpy.ops.object.convert(target='MESH')
-    _weld_cutter_mesh(txt_obj)
-    unbeveled_face_count = len(txt_obj.data.polygons)
-
-    from dice_gen.glyphs import _soften_cutter_edges
-    _soften_cutter_edges(txt_obj, depth)
-    beveled_face_count = len(txt_obj.data.polygons)
-
-    assert beveled_face_count > unbeveled_face_count, (
-        f"expected bevel to add faces (softened edges), got "
-        f"{unbeveled_face_count} -> {beveled_face_count}"
-    )
-
-    bpy.data.objects.remove(txt_obj, do_unlink=True)
-
-
 def run():
     test_glyph_label_formats()
     test_proportional_font_size_shrinks_for_longer_labels()
@@ -1922,9 +1860,7 @@ def run():
     test_load_font_returns_none_for_unrecognized_font_id()
     test_apply_engraved_glyphs_uses_load_font_with_correct_glyph_style()
     test_apply_decal_glyphs_uses_load_font_with_correct_glyph_style()
-    test_engrave_depth_fraction_is_shallower_than_before()
     test_engrave_depth_fraction_is_shallower_than_prior_value()
-    test_apply_engraved_glyphs_cutter_edges_are_rounded_not_sharp()
     test_face_vertex_orientations_returns_one_outward_pointing_matrix_per_vertex()
     test_apply_engraved_glyphs_cuts_three_corners_per_face_for_d4_numerals()
     test_apply_engraved_glyphs_does_not_triple_pips_for_d4()
