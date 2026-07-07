@@ -929,13 +929,46 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
         # 3D vertex positions) is sufficient: all three copies show the
         # identical value, so exact per-vertex correspondence doesn't
         # matter, only that each corner gets one correctly-outward-
-        # rotated copy. Angles/radius/size confirmed via render during
-        # planning to produce three non-overlapping, correctly-rotated
-        # copies within this function's existing camera framing.
+        # rotated copy.
+        #
+        # An earlier version placed the 3 copies on a fixed-radius circle
+        # (equal distance from center for all 3). That's the WRONG shape:
+        # confirmed via manual batch regeneration that only the "top"
+        # copy landed near a real corner (and was still clipped), while
+        # both "bottom" copies rendered well inside the face, nowhere
+        # near the actual bottom-left/bottom-right vertices -- visible as
+        # faint marks near the middle of the face rather than at its
+        # corners. Root cause: a real equilateral triangle's vertices are
+        # NOT equidistant from its own bounding-box center (which is what
+        # _unwrap_faces_to_full_square centers UV coordinates on) -- the
+        # two base vertices sit farther from that center than the apex
+        # does. The circle assumption ignored this, so the two "base"
+        # copies ended up positioned much closer to center (in UV terms)
+        # than the real base vertices.
+        #
+        # Fixed by computing the actual bounding-box-relative vertex
+        # offsets of an equilateral triangle whose half-width matches
+        # _unwrap_faces_to_full_square's default margin (0.1), i.e.
+        # half_width = 0.5 - 0.1 = 0.4 (UV-delta units), half_height =
+        # half_width * sqrt(3)/2 (an equilateral triangle's height/width
+        # ratio) -- then converting UV-delta units to this function's
+        # world-space scene via world = uv_delta * ortho_scale (this
+        # camera's ortho_scale=1.4 means world spans [-0.7,0.7] map to
+        # UV [0,1]), and applying `inset` (0.55, matching the engrave
+        # path's own corner inset) to bring each copy in from the true
+        # vertex position for clearance from the real edge. Verified via
+        # full-pipeline render (real UV unwrap + composite + 3D render)
+        # during this fix: all three copies now appear at the face's
+        # actual three corners.
         label = glyph_label(value, glyph_style)
-        for angle_deg in (90, 210, 330):
-            angle = math.radians(angle_deg)
-            ox, oy = 0.5 * math.cos(angle), 0.5 * math.sin(angle)
+        ortho_scale = 1.4
+        inset = 0.55
+        half_width = 0.4
+        half_height = half_width * math.sqrt(3) / 2
+        corners = [(0.0, half_height), (-half_width, -half_height), (half_width, -half_height)]
+        for cx, cy in corners:
+            angle = math.atan2(cy, cx)
+            ox, oy = cx * inset * ortho_scale, cy * inset * ortho_scale
             bpy.ops.object.text_add(location=(ox, oy, 0))
             txt_obj = bpy.context.active_object
             txt_obj.data.body = label
@@ -944,10 +977,10 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
                 txt_obj.data.font = font
             txt_obj.data.align_x = 'CENTER'
             txt_obj.data.align_y = 'CENTER'
-            txt_obj.data.size = 0.42
+            txt_obj.data.size = 0.35
             # Rotate so this copy's "up" points radially outward toward
-            # its own corner (the top corner, angle_deg=90, needs zero
-            # rotation since text already reads "up" by default).
+            # its own corner (the apex, straight up, needs zero rotation
+            # since text already reads "up" by default).
             txt_obj.rotation_euler = (0, 0, angle - math.pi / 2)
             bpy.context.collection.objects.unlink(txt_obj)
             scene.collection.objects.link(txt_obj)

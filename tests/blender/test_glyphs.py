@@ -1507,9 +1507,20 @@ def test_render_label_to_image_renders_three_corner_copies_for_d4():
     top, bottom-left, and bottom-right -- and confirming there is NO ink
     in the exact center (where a single centered copy would put it),
     proving this is genuinely a 3-corner layout, not a coincidentally
-    large single copy that happens to touch all these regions. Region
-    boundaries were confirmed empirically during planning by rendering
-    this exact layout and inspecting the raw pixel buffer.
+    large single copy that happens to touch all these regions.
+
+    Region boundaries match the equilateral-triangle-vertex-based layout
+    (not a fixed-radius circle -- an earlier version used a circle, which
+    was found during manual batch regeneration to place the two "bottom"
+    copies well inside the face, nowhere near the real bottom corners;
+    see _render_label_to_image's d4 branch for the full explanation).
+    Confirmed empirically by rendering this exact layout and scanning the
+    raw pixel buffer row-by-row: ink forms two clearly separated clusters
+    with a wide gap between them, top cluster at rows ~160-192 (the apex
+    copy) and bottom cluster at rows ~64-92 (the two base copies, whose
+    column ranges partially overlap in the upper half of that cluster
+    but stay clearly separated -- left col <=86, right col >=170 -- in
+    the lower half used here).
     """
     import bpy
     import numpy as np
@@ -1535,9 +1546,9 @@ def test_render_label_to_image_renders_three_corner_copies_for_d4():
             "expected NO ink in the exact center -- a 3-corner layout "
             "should leave the center empty"
         )
-        assert region_has_ink(190, 256, 90, 166), "expected ink near the top corner"
-        assert region_has_ink(0, 90, 10, 86), "expected ink near the bottom-left corner"
-        assert region_has_ink(0, 90, 170, 246), "expected ink near the bottom-right corner"
+        assert region_has_ink(150, 200, 100, 160), "expected ink near the top corner"
+        assert region_has_ink(55, 95, 40, 100), "expected ink near the bottom-left corner"
+        assert region_has_ink(55, 95, 160, 220), "expected ink near the bottom-right corner"
 
 
 def test_unwrap_faces_to_full_square_gives_d4_faces_consistent_apex_up_orientation():
