@@ -763,6 +763,25 @@ def _unwrap_faces_to_full_square(die_obj, margin=0.1):
     at (0.5, 0.5). Verified empirically to produce full per-face coverage
     across d6/d8/d10/d12/d20's differently-shaped faces (triangle, quad,
     kite, pentagon).
+
+    For triangular faces (d4 and d8/d20's faces), the raw tangent/bitangent
+    projection does NOT guarantee the same triangle orientation face to
+    face: confirmed empirically on a d4 that faces alternate between
+    "apex-up" (one vertex at high v, two sharing a low v) and "apex-down"
+    (the reverse) depending on each face's normal direction relative to
+    the shared global-up-hint convention. This broke
+    _render_label_to_image's fixed 3-corner d4 layout (which assumes every
+    face is apex-up): with alternating orientation, the top-corner copy
+    landed on a real vertex for half the faces and on the middle of a flat
+    edge for the other half, clipping it, while the two "bottom" copies
+    fell partly or fully outside the actual triangular UV footprint on
+    apex-down faces -- confirmed via manual batch regeneration (thumbnails
+    showed only a clipped top numeral and no bottom-corner numerals on
+    several d4 assets). Every triangular face's single distinctive vertex
+    (the one whose local v differs from the other two, which always share
+    a v value for this projection) is normalized to be the HIGH-v one
+    (apex-up) by flipping v for the whole face if the isolated vertex
+    came out low-v instead.
     """
     mesh = die_obj.data
     if mesh.uv_layers.active is None:
@@ -777,7 +796,19 @@ def _unwrap_faces_to_full_square(die_obj, margin=0.1):
         for loop_index in poly.loop_indices:
             vertex_index = mesh.loops[loop_index].vertex_index
             rel = mesh.vertices[vertex_index].co - center
-            local_coords.append((rel.dot(tangent), rel.dot(bitangent)))
+            local_coords.append([rel.dot(tangent), rel.dot(bitangent)])
+
+        if len(local_coords) == 3:
+            vs_raw = [c[1] for c in local_coords]
+            _, apex_index = min(
+                (abs(vs_raw[0] - vs_raw[1]), 2),
+                (abs(vs_raw[1] - vs_raw[2]), 0),
+                (abs(vs_raw[0] - vs_raw[2]), 1),
+            )
+            other_v = sum(v for i, v in enumerate(vs_raw) if i != apex_index) / 2.0
+            if vs_raw[apex_index] < other_v:
+                for c in local_coords:
+                    c[1] = -c[1]
 
         us = [c[0] for c in local_coords]
         vs = [c[1] for c in local_coords]

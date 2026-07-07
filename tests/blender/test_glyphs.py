@@ -1540,6 +1540,52 @@ def test_render_label_to_image_renders_three_corner_copies_for_d4():
         assert region_has_ink(0, 90, 170, 246), "expected ink near the bottom-right corner"
 
 
+def test_unwrap_faces_to_full_square_gives_d4_faces_consistent_apex_up_orientation():
+    """
+    Regression test for a bug found via manual batch regeneration: the raw
+    tangent/bitangent projection in _unwrap_faces_to_full_square does not
+    guarantee the same triangle orientation face to face -- on a d4, faces
+    alternated between "apex-up" (one vertex at high v, two sharing a low
+    v) and "apex-down" (the reverse), depending on each face's normal
+    relative to the shared global-up-hint convention. This broke
+    _render_label_to_image's fixed 3-corner d4 layout, which assumes every
+    face is apex-up: on apex-down faces, the "top" numeral landed on a
+    flat edge (clipped) and the two "bottom" numerals fell outside the
+    real triangular UV footprint (invisible). Confirmed visually: several
+    regenerated d4 decal assets showed only a clipped top numeral and no
+    bottom-corner numerals at all.
+
+    This checks every one of a d4's 4 faces ends up with its single
+    distinctive vertex (the one whose v differs from the other two) at
+    the HIGH v value, consistently -- i.e. every face is apex-up.
+    """
+    import bpy
+    from dice_gen import geometry, glyphs
+
+    obj = geometry.build_die_base_mesh("d4", size_mm=16.0)
+    glyphs._unwrap_faces_to_full_square(obj)
+
+    uv_layer = obj.data.uv_layers.active.data
+    for poly in obj.data.polygons:
+        vs = [uv_layer[li].uv.y for li in poly.loop_indices]
+        assert len(vs) == 3, "d4 faces should be triangles"
+
+        _, apex_index = min(
+            (abs(vs[0] - vs[1]), 2),
+            (abs(vs[1] - vs[2]), 0),
+            (abs(vs[0] - vs[2]), 1),
+        )
+        other_v = sum(v for i, v in enumerate(vs) if i != apex_index) / 2.0
+
+        assert vs[apex_index] > other_v, (
+            f"face {poly.index}: expected the isolated vertex (v={vs[apex_index]:.3f}) "
+            f"to be ABOVE the other two (avg v={other_v:.3f}) -- i.e. apex-up -- "
+            f"got apex-down instead, got vs={vs}"
+        )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
@@ -1570,6 +1616,7 @@ def run():
     test_apply_engraved_glyphs_does_not_triple_pips_for_d4()
     test_apply_engraved_glyphs_does_not_triple_numerals_for_non_d4_dice()
     test_render_label_to_image_renders_three_corner_copies_for_d4()
+    test_unwrap_faces_to_full_square_gives_d4_faces_consistent_apex_up_orientation()
 
 
 run_and_report(run)
