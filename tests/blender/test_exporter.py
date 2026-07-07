@@ -408,6 +408,58 @@ def test_save_blend_copy_sets_every_view3d_to_material_preview_shading():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_mesh_quality_warning_flags_a_degenerate_mesh():
+    import bmesh
+    import bpy
+    from dice_gen import geometry, exporter
+
+    obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.faces.ensure_lookup_table()
+    v = bm.verts.new((0.0, 0.0, 0.0))
+    v2 = bm.verts.new((0.0, 0.0, 0.0))
+    v3 = bm.verts.new((0.0, 0.0, 0.0))
+    bm.faces.new((v, v2, v3))
+    bm.to_mesh(obj.data)
+    obj.data.update()
+    bm.free()
+
+    warning = exporter._mesh_quality_warning(obj)
+    assert warning is not None
+    assert "degenerate" in warning.lower() or "zero-area" in warning.lower()
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_mesh_quality_warning_is_none_for_a_clean_die():
+    import bpy
+    from dice_gen import geometry, exporter
+
+    obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
+    warning = exporter._mesh_quality_warning(obj)
+    assert warning is None
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_export_asset_sets_mesh_quality_warnings_key():
+    import bpy
+    from dice_gen import geometry, materials, exporter
+
+    obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
+    mat = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
+    materials.apply_material(obj, mat)
+
+    with tempfile.TemporaryDirectory() as outdir:
+        record = {"asset_id": "test_d6_quality", "die_type": "d6"}
+        exporter.export_asset(obj, record, outdir, bevel_fraction=0.04, size_mm=16.0)
+        assert record["mesh_quality_warnings"] == []
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def test_export_asset_blend_image_textures_resolve_after_fresh_reload():
     """
     Regression test for a bug only visible by actually reloading a saved
@@ -487,6 +539,9 @@ def run():
     test_export_asset_saves_blend_before_usd_and_stl_export()
     test_export_asset_uses_fillet_segments_not_flat_chamfer()
     test_export_asset_bevel_does_not_runaway_tessellate_an_engraved_die()
+    test_mesh_quality_warning_flags_a_degenerate_mesh()
+    test_mesh_quality_warning_is_none_for_a_clean_die()
+    test_export_asset_sets_mesh_quality_warnings_key()
     test_save_blend_copy_sets_every_view3d_to_material_preview_shading()
     # Runs last: bpy.ops.wm.open_mainfile() fully replaces the session's
     # bpy.data, which would invalidate any objects/state earlier tests

@@ -41,6 +41,9 @@ def validate(outdir):
         for warning in record.get("engraving_warnings") or []:
             errors.append(f"{asset_id}: {warning}")
 
+        for warning in record.get("mesh_quality_warnings") or []:
+            errors.append(f"{asset_id}: {warning}")
+
         blend_rel_path = record.get("blend_path")
         if blend_rel_path:
             blend_path = os.path.join(outdir, blend_rel_path)

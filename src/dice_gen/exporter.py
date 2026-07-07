@@ -28,6 +28,7 @@ import json
 import math
 import os
 
+import bmesh
 import bpy
 
 
@@ -45,6 +46,11 @@ def export_asset(die_obj, manifest_record, outdir, bevel_fraction, size_mm):
     bpy.ops.object.select_all(action='DESELECT')
     die_obj.select_set(True)
     bpy.context.view_layer.objects.active = die_obj
+
+    quality_warning = _mesh_quality_warning(die_obj)
+    manifest_record["mesh_quality_warnings"] = [quality_warning] if quality_warning else []
+    if quality_warning:
+        print(f"WARNING: {quality_warning}")
 
     blend_path = os.path.join(outdir, f"{asset_id}.blend")
     _save_blend_copy(blend_path)
@@ -67,6 +73,44 @@ def export_asset(die_obj, manifest_record, outdir, bevel_fraction, size_mm):
         json.dump(manifest_record, f, indent=2)
 
     return manifest_path
+
+
+def _mesh_quality_warning(die_obj):
+    """
+    Scans the final (post-bevel) mesh for non-manifold edges and
+    zero-area faces -- a smaller, separate class of defect from the
+    catastrophic angle-based-bevel-on-recess-edges bug (see
+    test_export_asset_bevel_does_not_runaway_tessellate_an_engraved_die)
+    that can still occur when bevel geometry sits very close to an
+    engraved recess wall, confirmed empirically even with the
+    weight-based bevel fix applied. Rather than attempt to eliminate
+    this rarer case here (its root cause -- bevel/recess geometric
+    proximity -- is distinct and harder), give it the same visibility
+    every other known imperfection class in this pipeline already gets:
+    a warning string for the manifest, so validate_dice_assets.py
+    surfaces it instead of a possibly-defective mesh shipping silently.
+
+    1e-9 matches the scale used throughout this session's investigation:
+    legitimate die faces are many orders of magnitude larger than this
+    at any realistic size_mm, so it separates true degenerate slivers
+    from small-but-real geometry without needing a per-die-size-relative
+    threshold.
+    """
+    bm = bmesh.new()
+    bm.from_mesh(die_obj.data)
+    bm.faces.ensure_lookup_table()
+    non_manifold = sum(1 for e in bm.edges if not e.is_manifold)
+    zero_area = sum(1 for f in bm.faces if f.calc_area() < 1e-9)
+    bm.free()
+
+    if non_manifold == 0 and zero_area == 0:
+        return None
+
+    return (
+        f"{die_obj.name}: {non_manifold} non-manifold edge(s) and "
+        f"{zero_area} zero-area/degenerate face(s) found in the final "
+        f"exported mesh."
+    )
 
 
 def _save_blend_copy(blend_path):
