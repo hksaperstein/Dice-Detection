@@ -25,7 +25,6 @@ producing catastrophic degenerate output (confirmed on a real batch:
 d20/cjk_numerals asset -- see test_exporter.py's regression test).
 """
 import json
-import math
 import os
 
 import bmesh
@@ -77,8 +76,9 @@ def export_asset(die_obj, manifest_record, outdir, bevel_fraction, size_mm):
 
 def _mesh_quality_warning(die_obj):
     """
-    Scans the final (post-bevel) mesh for non-manifold edges and
-    zero-area faces -- a smaller, separate class of defect from the
+    Scans the final (post-bevel) mesh for non-manifold junctions (edges with
+    3+ linked faces), open boundary edges (edges with only 1 linked face),
+    and zero-area faces -- smaller, separate classes of defects from the
     catastrophic angle-based-bevel-on-recess-edges bug (see
     test_export_asset_bevel_does_not_runaway_tessellate_an_engraved_die)
     that can still occur when bevel geometry sits very close to an
@@ -98,16 +98,17 @@ def _mesh_quality_warning(die_obj):
     """
     bm = bmesh.new()
     bm.from_mesh(die_obj.data)
-    bm.faces.ensure_lookup_table()
-    non_manifold = sum(1 for e in bm.edges if not e.is_manifold)
+    non_manifold_junctions = sum(1 for e in bm.edges if len(e.link_faces) > 2)
+    boundary_edges = sum(1 for e in bm.edges if len(e.link_faces) == 1)
     zero_area = sum(1 for f in bm.faces if f.calc_area() < 1e-9)
     bm.free()
 
-    if non_manifold == 0 and zero_area == 0:
+    if non_manifold_junctions == 0 and boundary_edges == 0 and zero_area == 0:
         return None
 
     return (
-        f"{die_obj.name}: {non_manifold} non-manifold edge(s) and "
+        f"{die_obj.name}: {non_manifold_junctions} non-manifold junction edge(s), "
+        f"{boundary_edges} open boundary edge(s), and "
         f"{zero_area} zero-area/degenerate face(s) found in the final "
         f"exported mesh."
     )
