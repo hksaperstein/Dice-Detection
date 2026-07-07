@@ -1321,6 +1321,181 @@ def test_engrave_depth_fraction_is_shallower_than_before():
     )
 
 
+def test_face_vertex_orientations_returns_one_outward_pointing_matrix_per_vertex():
+    """
+    Direct geometric check of _face_vertex_orientations: for a d4 face
+    (triangle), it must return exactly 3 orientation matrices (one per
+    vertex), each positioned between the face center and that vertex (at
+    the `inset` fraction), with its bitangent (the numeral's "up"
+    direction) pointing toward that same vertex -- i.e. each corner copy
+    points radially outward toward its own corner, matching how real
+    vertex-read d4 dice arrange their three per-face numerals.
+    """
+    import bpy
+    from dice_gen import geometry, glyphs
+
+    obj = geometry.build_die_base_mesh("d4", size_mm=16.0)
+    face = obj.data.polygons[0]
+    assert len(face.vertices) == 3, "d4 faces should be triangles"
+
+    orientations = glyphs._face_vertex_orientations(obj.data, face, obj.matrix_world)
+    assert len(orientations) == 3
+
+    center = obj.matrix_world @ face.center
+    for vertex_index, orient in zip(face.vertices, orientations):
+        vertex_world = obj.matrix_world @ obj.data.vertices[vertex_index].co
+        expected_radial = (vertex_world - center).normalized()
+
+        bitangent = orient.to_3x3().col[1].normalized()
+        alignment = bitangent.dot(expected_radial)
+        assert alignment > 0.9, (
+            f"vertex {vertex_index}: bitangent {tuple(bitangent)} should "
+            f"point toward the vertex (radial {tuple(expected_radial)}), "
+            f"got alignment {alignment:.3f}"
+        )
+
+        position = orient.translation
+        dist_center_to_pos = (position - center).length
+        dist_center_to_vertex = (vertex_world - center).length
+        assert 0 < dist_center_to_pos < dist_center_to_vertex, (
+            f"vertex {vertex_index}: cut position should sit strictly "
+            f"between the face center and the vertex"
+        )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_apply_engraved_glyphs_cuts_three_corners_per_face_for_d4_numerals():
+    """
+    Real commercial d4 dice (standard tetrahedra, the shape this pipeline
+    builds) show the same digit three times per face, once per corner,
+    rather than the single centered numeral every other die type uses
+    (see docs/superpowers/specs/2026-07-06-d4-vertex-read-numbering-design.md
+    for the research). Confirms apply_engraved_glyphs performs 3 cuts per
+    face (12 total for d4's 4 faces) for a numeral glyph_style, via a spy
+    on the real _boolean_diff_apply, matching the spy technique already
+    used elsewhere in this file.
+    """
+    import bpy
+    from dice_gen import geometry, numbering, glyphs
+
+    die_type = "d4"
+    size_mm = 16.0
+    obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+    assert len(assignment) == 4, "d4 should have 4 faces assigned"
+
+    real_boolean_apply_fn = glyphs._boolean_diff_apply
+    call_count = [0]
+
+    def spy_boolean_apply(die_obj_arg, cutter_obj):
+        call_count[0] += 1
+        return real_boolean_apply_fn(die_obj_arg, cutter_obj)
+
+    glyphs._boolean_diff_apply = spy_boolean_apply
+    try:
+        glyphs.apply_engraved_glyphs(
+            obj, die_type, assignment,
+            glyph_style="arabic_numerals", glyph_fill="blank",
+            font_id="font_sans_bold", size_mm=size_mm,
+        )
+    finally:
+        glyphs._boolean_diff_apply = real_boolean_apply_fn
+
+    assert call_count[0] == 12, (
+        f"expected 3 cuts per face x 4 faces = 12 total cuts for d4 "
+        f"numerals, got {call_count[0]}"
+    )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_apply_engraved_glyphs_does_not_triple_pips_for_d4():
+    """
+    The vertex-read tripling only applies to numeral glyph_styles, not
+    pips (no researched real-world vertex convention for pip-style d4s).
+    Confirms pip cuts on a d4 are unaffected -- still one
+    _boolean_diff_apply call per pip in PIP_VALUE_LAYOUTS[value], not 3x.
+    """
+    import bpy
+    from dice_gen import geometry, numbering, glyphs
+
+    die_type = "d4"
+    size_mm = 16.0
+    obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+
+    real_boolean_apply_fn = glyphs._boolean_diff_apply
+    call_count = [0]
+
+    def spy_boolean_apply(die_obj_arg, cutter_obj):
+        call_count[0] += 1
+        return real_boolean_apply_fn(die_obj_arg, cutter_obj)
+
+    glyphs._boolean_diff_apply = spy_boolean_apply
+    try:
+        glyphs.apply_engraved_glyphs(
+            obj, die_type, assignment,
+            glyph_style="pips", glyph_fill="blank",
+            font_id="font_sans_bold", size_mm=size_mm,
+        )
+    finally:
+        glyphs._boolean_diff_apply = real_boolean_apply_fn
+
+    expected_calls = sum(
+        len(glyphs.PIP_VALUE_LAYOUTS.get(v, [(0, 0)])) for v in assignment.values()
+    )
+    assert call_count[0] == expected_calls, (
+        f"expected {expected_calls} pip cuts (unaffected by d4 vertex-read "
+        f"tripling), got {call_count[0]}"
+    )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_apply_engraved_glyphs_does_not_triple_numerals_for_non_d4_dice():
+    """
+    Regression guard: the vertex-read tripling is d4-only. A d6 with a
+    numeral glyph_style must still cut exactly 1 numeral per face (6
+    total), not 3 per face.
+    """
+    import bpy
+    from dice_gen import geometry, numbering, glyphs
+
+    die_type = "d6"
+    size_mm = 16.0
+    obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(die_type, pairs)
+    assert len(assignment) == 6
+
+    real_boolean_apply_fn = glyphs._boolean_diff_apply
+    call_count = [0]
+
+    def spy_boolean_apply(die_obj_arg, cutter_obj):
+        call_count[0] += 1
+        return real_boolean_apply_fn(die_obj_arg, cutter_obj)
+
+    glyphs._boolean_diff_apply = spy_boolean_apply
+    try:
+        glyphs.apply_engraved_glyphs(
+            obj, die_type, assignment,
+            glyph_style="arabic_numerals", glyph_fill="blank",
+            font_id="font_sans_bold", size_mm=size_mm,
+        )
+    finally:
+        glyphs._boolean_diff_apply = real_boolean_apply_fn
+
+    assert call_count[0] == 6, (
+        f"expected 1 cut per face x 6 faces = 6 for d6 (vertex-read "
+        f"tripling is d4-only), got {call_count[0]}"
+    )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
@@ -1346,6 +1521,10 @@ def run():
     test_apply_engraved_glyphs_uses_load_font_with_correct_glyph_style()
     test_apply_decal_glyphs_uses_load_font_with_correct_glyph_style()
     test_engrave_depth_fraction_is_shallower_than_before()
+    test_face_vertex_orientations_returns_one_outward_pointing_matrix_per_vertex()
+    test_apply_engraved_glyphs_cuts_three_corners_per_face_for_d4_numerals()
+    test_apply_engraved_glyphs_does_not_triple_pips_for_d4()
+    test_apply_engraved_glyphs_does_not_triple_numerals_for_non_d4_dice()
 
 
 run_and_report(run)

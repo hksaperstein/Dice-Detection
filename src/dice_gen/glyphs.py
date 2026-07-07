@@ -12,6 +12,7 @@ import numpy as np
 from mathutils import Vector, Matrix
 
 ENGRAVE_DEPTH_FRACTION = 0.03
+D4_CORNER_GLYPH_FONT_SIZE_FRACTION = 0.13
 
 FONT_FILES = {
     "font_sans_bold": "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -461,9 +462,48 @@ def _boolean_diff_apply(die_obj, cutter_obj):
     return warning
 
 
+def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.55):
+    """
+    Returns one orientation matrix per vertex of `face`, for d4's
+    vertex-read numeral convention: real commercial d4 dice (standard
+    tetrahedra -- confirmed this is the shape geometry.py builds) show
+    the same digit three times per face, once near each corner, oriented
+    so whichever corner points up when the die rests on the opposite
+    face reads correctly -- unlike every other die type, which uses a
+    single centered numeral via _face_orientation_matrix's global
+    up-hint convention.
+
+    For each vertex, "up" (bitangent) is the direction from the face
+    center toward that vertex, projected into the face plane -- i.e.
+    each copy points radially outward toward its own corner, matching
+    the 120-degree-apart rotational pattern real vertex-read d4s show.
+    `inset` places each copy 55% of the way from the face center to the
+    vertex (tested empirically: keeps the numeral clear of both the
+    face center and the beveled edge).
+    """
+    center = obj_matrix @ face.center
+    normal = (obj_matrix.to_3x3() @ face.normal).normalized()
+
+    orientations = []
+    for vertex_index in face.vertices:
+        vertex_world = obj_matrix @ mesh.vertices[vertex_index].co
+        radial = vertex_world - center
+        radial = (radial - radial.dot(normal) * normal).normalized()
+        tangent = radial.cross(normal).normalized()
+        bitangent = normal.cross(tangent).normalized()
+        rot = Matrix((tangent, bitangent, normal)).transposed().to_4x4()
+        rot.translation = center + (vertex_world - center) * inset
+        orientations.append(rot)
+    return orientations
+
+
 def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill, font_id, size_mm):
     depth = size_mm * ENGRAVE_DEPTH_FRACTION
-    glyph_font_size = size_mm * 0.18
+    is_d4_vertex_numerals = die_type == "d4" and glyph_style != "pips"
+    glyph_font_size = (
+        size_mm * D4_CORNER_GLYPH_FONT_SIZE_FRACTION if is_d4_vertex_numerals
+        else size_mm * 0.18
+    )
     warnings = []
 
     # Phase 1: compute every cut's (value, orientation) against the PRISTINE
@@ -472,11 +512,21 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
     # topology (reindexing/reordering polygons), so face_index values from
     # `assignment` (captured once upfront by geometry.compute_opposite_face_pairs)
     # must never be re-resolved against die_obj.data.polygons after a cut.
+    # Real commercial d4 dice show the same numeral 3 times per face (once
+    # per corner, vertex-read) rather than the single centered numeral every
+    # other die type uses -- see _face_vertex_orientations. This branch must
+    # stay inside Phase 1 (computed entirely against the pristine mesh):
+    # recomputing face.vertices/face.normal mid-loop, after an earlier cut
+    # has already rebuilt the mesh topology, causes a Blender crash.
     planned_cuts = []
     for face_index, value in assignment.items():
         face = die_obj.data.polygons[face_index]
-        orient = _face_orientation_matrix(face, die_obj.matrix_world)
-        planned_cuts.append((value, orient))
+        if is_d4_vertex_numerals:
+            for orient in _face_vertex_orientations(die_obj.data, face, die_obj.matrix_world):
+                planned_cuts.append((value, orient))
+        else:
+            orient = _face_orientation_matrix(face, die_obj.matrix_world)
+            planned_cuts.append((value, orient))
 
     # Phase 2: build and apply each cutter using only the precomputed
     # orientation matrices — no further indexing into die_obj.data.polygons.
