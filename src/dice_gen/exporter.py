@@ -103,6 +103,22 @@ def _save_blend_copy(blend_path):
 
     copy=True is required so saving this per-asset .blend never changes
     the long-running batch session's own "current file" identity.
+
+    relative_remap=False is required for a 4th reason, found by actually
+    reloading shipped .blend files fresh (rather than only inspecting the
+    live in-memory session, which never surfaces this): this batch
+    session never calls plain save_as_mainfile (only copy=True saves), so
+    bpy.data.filepath stays empty/unset for the entire run. With the
+    default relative_remap=True, Blender tries to remap already-loaded
+    image paths (e.g. printed_decal's composited textures, loaded via
+    bpy.data.images.load with a real absolute path) to be "//"-relative
+    to that undefined current-file location, producing garbage like
+    "//../../../../../../../data/raw/dice_assets/asset_00004_face0_composited.png"
+    -- confirmed on every one of a real batch's printed_decal assets
+    (51/51 affected), and confirmed fixed by explicitly setting
+    relative_remap=False across a multi-iteration save loop at the same
+    directory depth as this project, which leaves each image's already-
+    correct absolute path untouched and resolvable after a fresh reload.
     """
     for name in ("Cube", "Light", "Camera"):
         stray = bpy.data.objects.get(name)
@@ -119,7 +135,9 @@ def _save_blend_copy(blend_path):
                 if space.type == 'VIEW_3D':
                     space.shading.type = 'MATERIAL'
 
-    bpy.ops.wm.save_as_mainfile(filepath=blend_path, copy=True, check_existing=False)
+    bpy.ops.wm.save_as_mainfile(
+        filepath=blend_path, copy=True, check_existing=False, relative_remap=False,
+    )
 
 
 def _render_thumbnail(die_obj, thumb_path, size_mm, resolution=512):

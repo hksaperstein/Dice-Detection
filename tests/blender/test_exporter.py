@@ -346,6 +346,78 @@ def test_save_blend_copy_sets_every_view3d_to_material_preview_shading():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_export_asset_blend_image_textures_resolve_after_fresh_reload():
+    """
+    Regression test for a bug only visible by actually reloading a saved
+    .blend fresh, not by inspecting the live in-memory session (which is
+    why every earlier check in this codebase missed it -- thumbnails and
+    manual verification all rendered from the live session's already-
+    loaded image data, never re-reading the saved file's own stored path).
+
+    _save_blend_copy runs in a long-running batch session that never
+    calls plain save_as_mainfile (only copy=True saves), so
+    bpy.data.filepath stays empty/unset for the whole run. With the
+    default relative_remap=True, Blender tried to remap already-loaded
+    image paths (e.g. printed_decal's composited textures, loaded via
+    bpy.data.images.load with a real absolute path) to be "//"-relative
+    to that undefined current-file location, producing garbage paths
+    like "//../../../../../../../data/raw/dice_assets/asset_00004_face0_composited.png"
+    -- confirmed on every one of a real 51-asset printed_decal batch.
+    Fixed by passing relative_remap=False.
+
+    This test builds a die with a material that has a real image texture
+    (mimicking apply_decal_glyphs's pattern: bpy.data.images.load with an
+    absolute path, wired into a ShaderNodeTexImage), exports it, then
+    RELOADS the saved .blend fresh via bpy.ops.wm.open_mainfile and
+    checks every image datablock's stored path still resolves to an
+    existing file -- the only way to catch this class of bug.
+    """
+    import bpy
+    from dice_gen import geometry, materials, exporter
+
+    with tempfile.TemporaryDirectory() as outdir:
+        obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
+        base_mat = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
+        materials.apply_material(obj, base_mat)
+
+        # Mimic apply_decal_glyphs: a real image file, loaded via an
+        # absolute path, wired into a material's Base Color.
+        decal_image_path = os.path.join(outdir, "decal_texture.png")
+        tmp_img = bpy.data.images.new("decal_texture", 8, 8)
+        tmp_img.filepath_raw = decal_image_path
+        tmp_img.file_format = 'PNG'
+        tmp_img.save()
+        bpy.data.images.remove(tmp_img)
+
+        decal_mat = base_mat.copy()
+        decal_mat.name = "d6_decal"
+        nt = decal_mat.node_tree
+        tex_node = nt.nodes.new("ShaderNodeTexImage")
+        tex_node.image = bpy.data.images.load(decal_image_path)
+        nt.links.new(tex_node.outputs["Color"], nt.nodes["Principled BSDF"].inputs["Base Color"])
+        obj.data.materials.append(decal_mat)
+        obj.data.polygons[0].material_index = len(obj.data.materials) - 1
+
+        record = {"asset_id": "test_decal_reload", "die_type": "d6"}
+        exporter.export_asset(obj, record, outdir, bevel_fraction=0.04, size_mm=16.0)
+
+        blend_path = os.path.join(outdir, "test_decal_reload.blend")
+        bpy.ops.wm.open_mainfile(filepath=blend_path)
+
+        checked_any = False
+        for img in bpy.data.images:
+            if not img.filepath:
+                continue
+            checked_any = True
+            real_path = bpy.path.abspath(img.filepath)
+            assert os.path.exists(real_path), (
+                f"image {img.name!r} has filepath {img.filepath!r} which "
+                f"does not resolve to a real file after a fresh reload of "
+                f"the saved .blend -- got {real_path!r}"
+            )
+        assert checked_any, "expected at least one image datablock with a filepath to check"
+
+
 def run():
     test_export_asset_writes_usd_manifest_and_thumbnail()
     test_export_asset_blend_file_contains_only_the_die_object()
@@ -353,6 +425,10 @@ def run():
     test_export_asset_saves_blend_before_usd_and_stl_export()
     test_export_asset_uses_fillet_segments_not_flat_chamfer()
     test_save_blend_copy_sets_every_view3d_to_material_preview_shading()
+    # Runs last: bpy.ops.wm.open_mainfile() fully replaces the session's
+    # bpy.data, which would invalidate any objects/state earlier tests
+    # still held references to.
+    test_export_asset_blend_image_textures_resolve_after_fresh_reload()
 
 
 run_and_report(run)
