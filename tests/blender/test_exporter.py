@@ -306,6 +306,68 @@ def test_export_asset_uses_fillet_segments_not_flat_chamfer():
     bpy.data.objects.remove(single_segment_obj, do_unlink=True)
 
 
+def test_export_asset_bevel_does_not_runaway_tessellate_an_engraved_die():
+    """
+    Regression test for a confirmed real bug: the Bevel modifier's OLD
+    limit_method='ANGLE' (35 degrees) could not distinguish a die's large
+    structural edges from the many small, similarly-steep-angled edges
+    bounding an engraved numeral's recess, so 8-segment rounding got
+    applied inside tiny recess geometry too -- producing catastrophic
+    degenerate output (confirmed on a real 100-asset batch: e.g. a single
+    d20/cjk_numerals asset had 57,353 degenerate faces after export,
+    traced to this specific step via isolated synthetic reproduction: a
+    single engraved cube went from 1,314 to 17,754 faces and gained a
+    zero-area face purely from the OLD angle-based bevel step). The fix
+    (limit_method='WEIGHT', paired with geometry.build_die_base_mesh
+    marking only the pristine polyhedron's edges -- see test_geometry.py)
+    keeps bevel's face-count growth modest and bounded regardless of
+    glyph complexity, since it now only ever rounds the die's original
+    structural edges.
+    """
+    import bmesh
+    import bpy
+    from dice_gen import geometry, glyphs, materials, exporter
+
+    size_mm = 19.68719216365438
+    obj = geometry.build_die_base_mesh("d8", size_mm=size_mm)
+    face_pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = {}
+    for i, (a, b) in enumerate(face_pairs):
+        assignment[a] = i + 1
+        assignment[b] = 9 - (i + 1)
+
+    glyphs.apply_engraved_glyphs(
+        obj, "d8", assignment, "arabic_numerals", "painted",
+        "font_serif_regular", size_mm,
+    )
+    mat = materials.build_material("d8", "metallic", {
+        "hue": 0.06, "saturation": 0.66, "value": 0.23, "roughness": 0.07,
+    })
+    materials.apply_material(obj, mat)
+
+    bm_pre = bmesh.new()
+    bm_pre.from_mesh(obj.data)
+    faces_pre = len(bm_pre.faces)
+    bm_pre.free()
+
+    with tempfile.TemporaryDirectory() as outdir:
+        record = {"asset_id": "test_bevel_d8", "die_type": "d8"}
+        exporter.export_asset(obj, record, outdir, bevel_fraction=0.0358, size_mm=size_mm)
+
+    bm_post = bmesh.new()
+    bm_post.from_mesh(obj.data)
+    faces_post = len(bm_post.faces)
+    bm_post.free()
+
+    assert faces_post < faces_pre * 2, (
+        f"bevel grew face count from {faces_pre} to {faces_post} -- "
+        f"this magnitude of growth matches the confirmed angle-based "
+        f"runaway-tessellation bug, not normal structural rounding"
+    )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def test_save_blend_copy_sets_every_view3d_to_material_preview_shading():
     """
     _save_blend_copy must set every VIEW_3D viewport's shading to Material
@@ -424,6 +486,7 @@ def run():
     test_export_asset_blend_files_do_not_accumulate_across_multiple_exports()
     test_export_asset_saves_blend_before_usd_and_stl_export()
     test_export_asset_uses_fillet_segments_not_flat_chamfer()
+    test_export_asset_bevel_does_not_runaway_tessellate_an_engraved_die()
     test_save_blend_copy_sets_every_view3d_to_material_preview_shading()
     # Runs last: bpy.ops.wm.open_mainfile() fully replaces the session's
     # bpy.data, which would invalidate any objects/state earlier tests

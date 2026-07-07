@@ -14,10 +14,15 @@ _save_blend_copy).
 
 The Bevel modifier's segments=8 (rather than the default 1) produces a
 smooth rounded fillet on the die's structural edges/corners instead of a
-single flat chamfer facet. limit_method='ANGLE' (not 'NONE') ensures it
-only rounds those structural edges (e.g. a cube's ~90 degree edges) while
-leaving shallow engraved-numeral recesses (much shallower angle deltas)
-crisp.
+single flat chamfer facet. limit_method='WEIGHT' (not 'ANGLE') rounds
+only the edges geometry.build_die_base_mesh marked with full bevel
+weight on the pristine polyhedron before any engraving ever ran --
+'ANGLE' was tried first and rejected: it can't distinguish those
+structural edges from the many similarly-steep-angled edges an engraved
+numeral's recess introduces, so it also rounded recess geometry,
+producing catastrophic degenerate output (confirmed on a real batch:
+42/49 engraved assets affected, e.g. 57,353 degenerate faces on one
+d20/cjk_numerals asset -- see test_exporter.py's regression test).
 """
 import json
 import math
@@ -33,8 +38,7 @@ def export_asset(die_obj, manifest_record, outdir, bevel_fraction, size_mm):
     mod = die_obj.modifiers.new(name="Bevel", type='BEVEL')
     mod.width = size_mm * bevel_fraction
     mod.segments = 8
-    mod.limit_method = 'ANGLE'
-    mod.angle_limit = math.radians(35)
+    mod.limit_method = 'WEIGHT'
     bpy.context.view_layer.objects.active = die_obj
     bpy.ops.object.modifier_apply(modifier=mod.name)
 
