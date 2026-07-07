@@ -1128,7 +1128,7 @@ def test_unwrap_faces_to_full_square_covers_full_uv_range_per_face():
     margin = 0.1
     for die_type in ("d4", "d6", "d8", "d10", "d12", "d20"):
         obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
-        glyphs._unwrap_faces_to_full_square(obj, margin=margin)
+        glyphs._unwrap_faces_to_full_square(obj, die_type, margin=margin)
 
         uv_layer = obj.data.uv_layers.active.data
         for poly in obj.data.polygons:
@@ -1574,7 +1574,7 @@ def test_unwrap_faces_to_full_square_gives_d4_faces_consistent_apex_up_orientati
     from dice_gen import geometry, glyphs
 
     obj = geometry.build_die_base_mesh("d4", size_mm=16.0)
-    glyphs._unwrap_faces_to_full_square(obj)
+    glyphs._unwrap_faces_to_full_square(obj, "d4")
 
     uv_layer = obj.data.uv_layers.active.data
     for poly in obj.data.polygons:
@@ -1632,7 +1632,7 @@ def test_unwrap_faces_to_full_square_does_not_mirror_any_triangular_face():
 
     for die_type, size_mm in (("d4", 16.0), ("d8", 20.0), ("d20", 20.0)):
         obj = geometry.build_die_base_mesh(die_type, size_mm=size_mm)
-        glyphs._unwrap_faces_to_full_square(obj)
+        glyphs._unwrap_faces_to_full_square(obj, die_type)
 
         uv_layer = obj.data.uv_layers.active.data
         signs = set()
@@ -1750,6 +1750,51 @@ def test_apply_engraved_glyphs_orients_d8_hemispheres_toward_their_own_pole():
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_unwrap_faces_to_full_square_mirrors_between_d8_hemispheres():
+    """
+    The decal path's UV orientation must match the engraved path's fix
+    (test_face_orientation_matrix_mirrors_between_d8_hemispheres) --
+    otherwise the same d8 die type would show the correct mirrored
+    numeral pattern when engraved but the old smoothly-rotating (wrong)
+    pattern when printed as a decal, which is inconsistent: there is one
+    real numbering convention per die type, independent of glyph_method.
+    """
+    import bpy
+    from dice_gen import geometry
+    from dice_gen.glyphs import _unwrap_faces_to_full_square
+
+    obj = geometry.build_die_base_mesh("d8", size_mm=18.0)
+    poles = geometry.compute_face_poles(obj, "d8")
+    _unwrap_faces_to_full_square(obj, "d8")
+
+    uv_layer = obj.data.uv_layers.active.data
+    for face in obj.data.polygons:
+        pole_world = poles[face.index]
+        center_world = obj.matrix_world @ face.center
+        pole_direction_world = (pole_world - center_world).normalized()
+
+        # The face's "up" in its own UV square is the +V direction; find
+        # which world-space direction that corresponds to by comparing
+        # the two vertices with the highest and lowest V coordinate in
+        # this face's loop.
+        loop_indices = list(range(face.loop_start, face.loop_start + face.loop_total))
+        highest_v_loop = max(loop_indices, key=lambda li: uv_layer[li].uv.y)
+        lowest_v_loop = min(loop_indices, key=lambda li: uv_layer[li].uv.y)
+        highest_vert = obj.data.loops[highest_v_loop].vertex_index
+        lowest_vert = obj.data.loops[lowest_v_loop].vertex_index
+        world_up_direction = (
+            obj.matrix_world @ obj.data.vertices[highest_vert].co
+            - obj.matrix_world @ obj.data.vertices[lowest_vert].co
+        ).normalized()
+
+        assert world_up_direction.dot(pole_direction_world) > 0, (
+            f"face {face.index}: UV 'up' direction does not point toward "
+            f"this face's own pole"
+        )
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_glyph_label_formats()
     test_engraved_glyphs_reduce_solid_volume()
@@ -1785,6 +1830,7 @@ def run():
     test_tangent_bitangent_up_reference_overrides_global_up_hint()
     test_face_orientation_matrix_mirrors_between_d8_hemispheres()
     test_apply_engraved_glyphs_orients_d8_hemispheres_toward_their_own_pole()
+    test_unwrap_faces_to_full_square_mirrors_between_d8_hemispheres()
 
 
 run_and_report(run)

@@ -765,7 +765,7 @@ def _composite_alpha_over(background_path, foreground_path, output_path, resolut
     bpy.data.images.remove(out_image)
 
 
-def _unwrap_faces_to_full_square(die_obj, margin=0.1):
+def _unwrap_faces_to_full_square(die_obj, die_type, margin=0.1):
     """
     Gives every face its OWN UV island filling the full 0-1 square,
     instead of bpy.ops.uv.smart_project's shared-atlas packing (which
@@ -783,6 +783,17 @@ def _unwrap_faces_to_full_square(die_obj, margin=0.1):
     at (0.5, 0.5). Verified empirically to produce full per-face coverage
     across d6/d8/d10/d12/d20's differently-shaped faces (triangle, quad,
     kite, pentagon).
+
+    For d8/d10, each face's tangent/bitangent frame uses that face's own
+    pole (see geometry.compute_face_poles) as the up_reference passed to
+    _tangent_bitangent, mirroring _face_orientation_matrix's engraved-path
+    fix -- otherwise the same die type would show the correct mirrored
+    numeral pattern when engraved but the old smoothly-rotating (wrong)
+    pattern when printed as a decal. compute_face_poles returns WORLD-space
+    pole positions, but this function operates in LOCAL space (see below),
+    so each pole is transformed into local space via
+    die_obj.matrix_world.inverted() before use. For all other die types,
+    compute_face_poles returns None and behavior is unchanged.
 
     For triangular faces (d4 and d8/d20's faces), the raw tangent/bitangent
     projection does NOT guarantee the same triangle orientation face to
@@ -816,9 +827,19 @@ def _unwrap_faces_to_full_square(die_obj, margin=0.1):
         mesh.uv_layers.new(name="decal_uv")
     uv_layer = mesh.uv_layers.active.data
 
+    face_poles = compute_face_poles(die_obj, die_type)
+    matrix_world_inv = die_obj.matrix_world.inverted()
+
     for poly in mesh.polygons:
-        tangent, bitangent = _tangent_bitangent(poly.normal)
+        normal = poly.normal
         center = poly.center
+
+        up_reference = None
+        if face_poles is not None:
+            pole_local = matrix_world_inv @ face_poles[poly.index]
+            to_pole = pole_local - center
+            up_reference = (to_pole - to_pole.dot(normal) * normal).normalized()
+        tangent, bitangent = _tangent_bitangent(normal, up_reference=up_reference)
 
         local_coords = []
         for loop_index in poly.loop_indices:
@@ -886,7 +907,7 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
     Blender auto-uniquifies datablock names within a session and this is not
     a filename-collision concern.
     """
-    _unwrap_faces_to_full_square(die_obj)
+    _unwrap_faces_to_full_square(die_obj, die_type)
 
     base_mat = die_obj.data.materials[0] if len(die_obj.data.materials) > 0 else None
 
