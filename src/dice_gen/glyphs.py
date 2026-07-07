@@ -12,6 +12,8 @@ import bmesh
 import numpy as np
 from mathutils import Vector, Matrix
 
+from .geometry import compute_face_poles
+
 ENGRAVE_DEPTH_FRACTION = 0.03
 D4_CORNER_GLYPH_FONT_SIZE_FRACTION = 0.13
 
@@ -93,15 +95,26 @@ def glyph_label(value, glyph_style):
     raise ValueError(f"glyph_label not applicable to style {glyph_style!r}")
 
 
-def _tangent_bitangent(normal, threshold=0.999):
+def _tangent_bitangent(normal, up_reference=None, threshold=0.999):
     """
     Given a (normalized) face normal, returns a consistent (tangent,
-    bitangent) in-plane basis by projecting a global "up" reference
-    direction onto the face's plane. Global +Z is used as the up
-    reference for every face EXCEPT when normal is itself (near-)parallel
-    to +/-Z, where the projection is undefined (up_hint.cross(normal)
-    would be the zero vector) -- global +Y is used instead for that
-    narrow case only.
+    bitangent) in-plane basis by projecting an "up" reference direction
+    onto the face's plane.
+
+    When up_reference is given (d8/d10's hemisphere-aware orientation --
+    see _face_orientation_matrix), THAT vector is projected instead of
+    the global hint below -- this is what lets each face orient toward
+    its OWN pole vertex rather than one direction shared by the whole
+    die, which is what real d8/d10 dice do (confirmed empirically: the
+    single-global-vector convention is structurally incapable of
+    producing the mirrored-hemisphere pattern real dice show, since it's
+    a smooth function of the normal alone with no reflection anywhere).
+
+    Global +Z is used as the up reference for every OTHER face (d4, d6,
+    d12, d20, and any d8/d10 caller that doesn't pass up_reference)
+    EXCEPT when normal is itself (near-)parallel to +/-Z, where the
+    projection is undefined (up_hint.cross(normal) would be the zero
+    vector) -- global +Y is used instead for that narrow case only.
 
     The threshold (normal.z's absolute value) for switching to the Y
     fallback must stay very close to 1.0. An earlier version used 0.9,
@@ -121,16 +134,21 @@ def _tangent_bitangent(normal, threshold=0.999):
     unwrap, local-space normal) so both glyph methods use one consistent
     orientation convention instead of two independently-behaving ones.
     """
-    up_hint = Vector((0, 0, 1)) if abs(normal.z) < threshold else Vector((0, 1, 0))
-    tangent = up_hint.cross(normal).normalized()
+    if up_reference is None:
+        up_reference = Vector((0, 0, 1)) if abs(normal.z) < threshold else Vector((0, 1, 0))
+    tangent = up_reference.cross(normal).normalized()
     bitangent = normal.cross(tangent).normalized()
     return tangent, bitangent
 
 
-def _face_orientation_matrix(face, obj_matrix):
+def _face_orientation_matrix(face, obj_matrix, pole_world_co=None):
     center = obj_matrix @ face.center
     normal = (obj_matrix.to_3x3() @ face.normal).normalized()
-    tangent, bitangent = _tangent_bitangent(normal)
+    up_reference = None
+    if pole_world_co is not None:
+        to_pole = pole_world_co - center
+        up_reference = (to_pole - to_pole.dot(normal) * normal).normalized()
+    tangent, bitangent = _tangent_bitangent(normal, up_reference=up_reference)
     rot = Matrix((tangent, bitangent, normal)).transposed().to_4x4()
     rot.translation = center
     return rot
@@ -519,6 +537,7 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
     # stay inside Phase 1 (computed entirely against the pristine mesh):
     # recomputing face.vertices/face.normal mid-loop, after an earlier cut
     # has already rebuilt the mesh topology, causes a Blender crash.
+    face_poles = compute_face_poles(die_obj, die_type)
     planned_cuts = []
     for face_index, value in assignment.items():
         face = die_obj.data.polygons[face_index]
@@ -526,7 +545,8 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
             for orient in _face_vertex_orientations(die_obj.data, face, die_obj.matrix_world):
                 planned_cuts.append((value, orient))
         else:
-            orient = _face_orientation_matrix(face, die_obj.matrix_world)
+            pole_co = face_poles[face_index] if face_poles is not None else None
+            orient = _face_orientation_matrix(face, die_obj.matrix_world, pole_world_co=pole_co)
             planned_cuts.append((value, orient))
 
     # Phase 2: build and apply each cutter using only the precomputed
