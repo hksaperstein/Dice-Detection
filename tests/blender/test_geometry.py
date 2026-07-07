@@ -90,11 +90,59 @@ def test_build_die_base_mesh_marks_all_edges_with_full_bevel_weight():
         bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def test_compute_face_poles_maps_every_d8_and_d10_face_to_exactly_one_pole():
+    """
+    d8 and d10 are both built (see DIE_SPECS/_d10_base_vertices) as
+    bipyramids: two pole vertices at the extremal Z positions, plus a ring.
+    Every face touches exactly one pole (confirmed empirically for both
+    die types this session, via direct vertex-index inspection). This is
+    the geometric fact the hemisphere-aware orientation/numbering fixes
+    (see glyphs.py and numbering.py) depend on -- real dice mirror each
+    face's numeral relative to its own pole, which the die's single prior
+    global-up-vector convention could not express.
+    """
+    import bpy
+    from dice_gen import geometry
+
+    for die_type in ("d8", "d10"):
+        obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
+        poles = geometry.compute_face_poles(obj, die_type)
+
+        assert poles is not None, f"{die_type}: expected a pole mapping"
+        assert len(poles) == len(obj.data.polygons), (
+            f"{die_type}: expected every face mapped, got {len(poles)} of "
+            f"{len(obj.data.polygons)}"
+        )
+        distinct_poles = {tuple(round(c, 6) for c in v) for v in poles.values()}
+        assert len(distinct_poles) == 2, (
+            f"{die_type}: expected exactly 2 distinct pole positions, got "
+            f"{distinct_poles}"
+        )
+        zs = sorted(p[2] for p in distinct_poles)
+        assert zs[0] < 0 < zs[1], f"{die_type}: expected one pole above and one below the origin, got {zs}"
+
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_compute_face_poles_returns_none_for_non_bipyramid_dice():
+    import bpy
+    from dice_gen import geometry
+
+    for die_type in ("d4", "d6", "d12", "d20"):
+        obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
+        assert geometry.compute_face_poles(obj, die_type) is None, (
+            f"{die_type}: expected None (not a two-pole bipyramid)"
+        )
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def run():
     test_all_six_dice_build_with_correct_topology()
     test_opposite_face_pairs_are_geometrically_antiparallel_for_d6()
     test_d4_opposite_face_pairs_returns_two_pairs_covering_all_faces()
     test_build_die_base_mesh_marks_all_edges_with_full_bevel_weight()
+    test_compute_face_poles_maps_every_d8_and_d10_face_to_exactly_one_pole()
+    test_compute_face_poles_returns_none_for_non_bipyramid_dice()
 
 
 run_and_report(run)

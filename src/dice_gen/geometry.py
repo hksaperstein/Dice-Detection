@@ -164,3 +164,44 @@ def compute_opposite_face_pairs(obj):
         pairs.append((i, best_j))
         remaining.discard(best_j)
     return pairs
+
+
+def compute_face_poles(obj, die_type):
+    """
+    d8 and d10 are both built (see DIE_SPECS / _d10_base_vertices) as
+    bipyramids: exactly two pole vertices at the extremal local-Z
+    positions, plus a ring of equatorial vertices. Every face touches
+    exactly one pole (confirmed empirically this session via direct
+    vertex-index inspection on both die types). Real dice orient each
+    face's numeral relative to its OWN pole, not one global up-vector --
+    see glyphs.py's _tangent_bitangent for the orientation fix this
+    enables, and numbering.py's assign_values_to_opposite_pairs for the
+    matching hemisphere-consistent value assignment.
+
+    Returns None for die types without this two-pole structure (d4, d6,
+    d12, d20) -- those keep their existing single-global-up-vector
+    orientation convention unchanged.
+    """
+    if die_type not in ("d8", "d10"):
+        return None
+
+    mesh = obj.data
+    top_idx = max(range(len(mesh.vertices)), key=lambda i: mesh.vertices[i].co.z)
+    bottom_idx = min(range(len(mesh.vertices)), key=lambda i: mesh.vertices[i].co.z)
+    top_co = obj.matrix_world @ mesh.vertices[top_idx].co
+    bottom_co = obj.matrix_world @ mesh.vertices[bottom_idx].co
+
+    poles = {}
+    for face in mesh.polygons:
+        verts = set(face.vertices)
+        if top_idx in verts:
+            poles[face.index] = top_co
+        elif bottom_idx in verts:
+            poles[face.index] = bottom_co
+        else:
+            raise GeometryBuildError(
+                f"{die_type} face {face.index} touches neither pole vertex "
+                f"-- the two-pole bipyramid assumption compute_face_poles "
+                f"relies on doesn't hold for this mesh"
+            )
+    return poles
