@@ -158,11 +158,43 @@ def main_blender():
         ground = bpy.context.active_object
         gmat = bpy.data.materials.new("ground")
         gmat.use_nodes = True
-        bsdf = gmat.node_tree.nodes["Principled BSDF"]
-        r, g, b = colorsys.hsv_to_rgb(rng.random(), rng.uniform(0.0, 0.5),
-                                      rng.uniform(0.1, 0.9))
+        gnt = gmat.node_tree
+        bsdf = gnt.nodes["Principled BSDF"]
+        r, g, b = colorsys.hsv_to_rgb(rng.random(), rng.uniform(0.0, 0.9),
+                                      rng.uniform(0.05, 0.95))
         bsdf.inputs["Base Color"].default_value = (r, g, b, 1.0)
-        bsdf.inputs["Roughness"].default_value = rng.uniform(0.25, 0.95)
+        bsdf.inputs["Roughness"].default_value = rng.uniform(0.2, 0.95)
+        if rng.random() < 0.15:
+            bsdf.inputs["Metallic"].default_value = 1.0
+        # ~half the grounds get a procedural two-tone pattern (noise /
+        # voronoi / checker / waves at random scale) instead of a flat
+        # color -- tabletop surfaces are rarely uniform.
+        if rng.random() < 0.5:
+            r2, g2, b2 = colorsys.hsv_to_rgb(rng.random(),
+                                             rng.uniform(0.0, 0.9),
+                                             rng.uniform(0.05, 0.95))
+            tex_kind = rng.choice(["noise", "voronoi", "checker", "wave"])
+            if tex_kind == "noise":
+                tex = gnt.nodes.new("ShaderNodeTexNoise")
+                tex.inputs["Scale"].default_value = rng.uniform(2, 40)
+                fac_out = tex.outputs["Fac"]
+            elif tex_kind == "voronoi":
+                tex = gnt.nodes.new("ShaderNodeTexVoronoi")
+                tex.inputs["Scale"].default_value = rng.uniform(3, 60)
+                fac_out = tex.outputs["Distance"]
+            elif tex_kind == "checker":
+                tex = gnt.nodes.new("ShaderNodeTexChecker")
+                tex.inputs["Scale"].default_value = rng.uniform(4, 80)
+                fac_out = tex.outputs["Fac"]
+            else:
+                tex = gnt.nodes.new("ShaderNodeTexWave")
+                tex.inputs["Scale"].default_value = rng.uniform(1, 20)
+                fac_out = tex.outputs["Fac"]
+            ramp = gnt.nodes.new("ShaderNodeValToRGB")
+            ramp.color_ramp.elements[0].color = (r, g, b, 1.0)
+            ramp.color_ramp.elements[1].color = (r2, g2, b2, 1.0)
+            gnt.links.new(fac_out, ramp.inputs["Fac"])
+            gnt.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
         ground.data.materials.append(gmat)
 
         world = bpy.data.worlds.new("w")
@@ -197,9 +229,10 @@ def main_blender():
             dice.append(die)
 
         distractors = []
-        for _ in range(rng.randint(0, 3)):
-            kind = rng.choice(["cube", "sphere", "cylinder", "cone"])
-            size = rng.uniform(0.008, 0.045)
+        for _ in range(rng.randint(0, 5)):
+            kind = rng.choice(["cube", "sphere", "cylinder", "cone",
+                               "torus", "ico", "slab", "stick"])
+            size = rng.uniform(0.006, 0.055)
             if kind == "cube":
                 bpy.ops.mesh.primitive_cube_add(size=size)
             elif kind == "sphere":
@@ -207,11 +240,25 @@ def main_blender():
             elif kind == "cylinder":
                 bpy.ops.mesh.primitive_cylinder_add(radius=size / 2,
                                                     depth=size)
-            else:
+            elif kind == "cone":
                 bpy.ops.mesh.primitive_cone_add(radius1=size / 2, depth=size)
+            elif kind == "torus":
+                bpy.ops.mesh.primitive_torus_add(
+                    major_radius=size / 2, minor_radius=size * rng.uniform(0.08, 0.2))
+            elif kind == "ico":
+                bpy.ops.mesh.primitive_ico_sphere_add(
+                    radius=size / 2, subdivisions=1)
+            elif kind == "slab":
+                bpy.ops.mesh.primitive_cube_add(size=size)
+                bpy.context.active_object.scale = (
+                    rng.uniform(1.0, 2.5), rng.uniform(1.0, 2.5),
+                    rng.uniform(0.1, 0.35))
+            else:  # stick
+                bpy.ops.mesh.primitive_cylinder_add(radius=size * 0.12,
+                                                    depth=size * rng.uniform(2, 5))
             d = bpy.context.active_object
             angle = rng.uniform(0, 2 * math.pi)
-            radius = rng.uniform(0.03, 0.11)
+            radius = rng.uniform(0.03, 0.12)
             d.location = (radius * math.cos(angle), radius * math.sin(angle),
                           0.05 + rng.uniform(0, 0.03))
             d.rotation_euler = (rng.uniform(0, 6.3), rng.uniform(0, 6.3),
@@ -219,11 +266,11 @@ def main_blender():
             dmat = bpy.data.materials.new("distractor")
             dmat.use_nodes = True
             db = dmat.node_tree.nodes["Principled BSDF"]
-            r, g, b = colorsys.hsv_to_rgb(rng.random(), rng.uniform(0.2, 1.0),
-                                          rng.uniform(0.1, 0.9))
+            r, g, b = colorsys.hsv_to_rgb(rng.random(), rng.uniform(0.0, 1.0),
+                                          rng.uniform(0.03, 0.97))
             db.inputs["Base Color"].default_value = (r, g, b, 1.0)
-            db.inputs["Roughness"].default_value = rng.uniform(0.1, 0.9)
-            db.inputs["Metallic"].default_value = rng.choice([0.0, 0.0, 1.0])
+            db.inputs["Roughness"].default_value = rng.uniform(0.05, 0.95)
+            db.inputs["Metallic"].default_value = rng.choice([0.0, 0.0, 0.0, 1.0])
             d.data.materials.append(dmat)
             distractors.append(d)
 
