@@ -50,11 +50,15 @@ overkill for 7 rigid classes).
   boxes, 7 classes (`d4, d6, d8, d10, d10_pct, d12, d20`), ~7k boxes/class.
 - Converted COCO → YOLO txt format into `data/yolo/` (gitignored, derived
   artifact).
-- **Split by asset set, not by image.** Annotations carry
-  `asset_id` (e.g. `set_00298_d20`); the same generated die appears in many
-  images. Split unit = the `set_NNNNN` prefix, ~90/10 train/val. A random
-  image-level split would leak identical die instances into val and inflate
-  mAP.
+- **Split: image-level random 90/10 (seed 42).** The originally-specified
+  asset-set-level split is infeasible: 9,948 of 10,000 images contain dice
+  from more than one of the 600 asset sets, so no image partition keeps
+  sets disjoint. Consequence: synthetic val mAP is optimistic (same die
+  instances appear in train and val) and is used only for training
+  monitoring — the frozen real test set is the sole generalization
+  measure. Feedback to the generator for the next dataset iteration:
+  sample each image's dice from a split-designated pool of asset sets so a
+  leak-free synthetic val exists.
 
 ### Real (fine-tune slice + frozen test set)
 

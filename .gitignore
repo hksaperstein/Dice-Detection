@@ -5,10 +5,15 @@ __pycache__/
 venv/
 .env/
 .ipynb_checkpoints/
+.venv/
 
 # Data and models
 /data/
 /models/
+data/yolo/
+data/real/
+models/
+yolo11*.pt
 
 # OS
 .DS_Store
