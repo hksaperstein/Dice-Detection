@@ -1294,16 +1294,25 @@ def material_rendered_luminance(material, tmp_dir, asset_id, resolution=64):
 
 def _d4_corner_labels(die_obj, die_type, face_index, glyph_style):
     """
-    For a d4 face, maps the decal canvas's three fixed corner positions
-    (apex, bottom-left, bottom-right -- see _render_label_to_image's d4
-    branch) to the labels of the REAL mesh vertices that landed at those
-    UV corners, using the UV layout _unwrap_faces_to_full_square already
-    wrote. This is what makes the vertex-read convention hold on the
-    decal path: every face shows its 3 corners' own vertex values, and
-    the 3 faces meeting at any vertex agree on the value shown there.
+    For a d4 face, pairs each of the face's REAL UV corner positions
+    with the label of the mesh vertex that landed there, using the UV
+    layout _unwrap_faces_to_full_square already wrote. This is what
+    makes the vertex-read convention hold on the decal path: every face
+    shows its 3 corners' own vertex values, and the 3 faces meeting at
+    any vertex agree on the value shown there.
 
-    Returns [apex_label, bottom_left_label, bottom_right_label], or None
-    for anything that isn't a d4 numeral face (including pips).
+    Returning the real per-face UV positions (not just labels for an
+    idealized fixed layout) also fixes the numerals' centering:
+    _render_label_to_image places each copy on the MEDIAN from the face
+    center toward its own vertex. An earlier fixed canonical layout
+    inset the copies about the CANVAS center instead -- but the canvas
+    center is the UV island's bbox midpoint, which for a triangle sits
+    half an inradius toward the apex from the centroid, so all three
+    numerals were visibly displaced off their medians (user-reported
+    twice).
+
+    Returns [(label, (u, v)), ...] for the face's 3 corners, or None for
+    anything that isn't a d4 numeral face (including pips).
     """
     if die_type != "d4" or glyph_style == "pips":
         return None
@@ -1316,11 +1325,9 @@ def _d4_corner_labels(die_obj, die_type, face_index, glyph_style):
     for loop_index in poly.loop_indices:
         u, v = uv_layer[loop_index].uv
         entries.append((u, v, mesh.loops[loop_index].vertex_index))
-    apex = max(entries, key=lambda e: e[1])
-    base = sorted((e for e in entries if e is not apex), key=lambda e: e[0])
-    ordered = [apex, base[0], base[1]]
     return [
-        glyph_label(vertex_values[e[2]], glyph_style, die_type) for e in ordered
+        (glyph_label(vertex_values[vi], glyph_style, die_type), (u, v))
+        for (u, v, vi) in entries
     ]
 
 
@@ -1416,34 +1423,50 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
         # version rendered the face's single assigned value at all 3
         # corners; corrected per direct user feedback.)
         #
-        # Corner geometry: an earlier version placed the 3 copies on a
-        # fixed-radius circle. That's the WRONG shape: an equilateral
-        # triangle's vertices are NOT equidistant from its own
-        # bounding-box center (which is what _unwrap_faces_to_full_square
-        # centers UV coordinates on) -- the two base vertices sit farther
-        # from that center than the apex does. Fixed by computing the
-        # actual bounding-box-relative vertex offsets of an equilateral
-        # triangle whose half-width matches the unwrap's margin
-        # (half_width = 0.5 - 0.1 = 0.4 UV-delta units, half_height =
-        # half_width * sqrt(3)/2), converted to world units via
-        # world = uv_delta * ortho_scale, with `inset` (0.55, matching
-        # the engrave path) for clearance from the real edge. Verified
-        # via full-pipeline render during that fix.
-        base_labels = corner_labels if corner_labels is not None else [
-            glyph_label(value, glyph_style, die_type)
-        ] * 3
+        # Corner geometry: each copy sits on its own MEDIAN -- the line
+        # from the face center (anchor_uv, the same centroid the engrave
+        # path cuts at) toward its own real UV vertex position (carried
+        # in corner_labels by _d4_corner_labels), `inset` of the way out.
+        # Two earlier layouts were both visibly off: a fixed-radius
+        # circle (an equilateral triangle's vertices are not equidistant
+        # from its bbox center), then a fixed bbox-relative corner list
+        # inset about the CANVAS center -- the canvas center is the UV
+        # island's bbox midpoint, half an inradius toward the apex from
+        # the centroid, so all three numerals sat displaced off their
+        # medians (user-reported). Real per-face positions replace all
+        # idealized layouts.
         ortho_scale = 1.4
         inset = 0.40
-        half_width = 0.4
-        half_height = half_width * math.sqrt(3) / 2
-        corners = [(0.0, half_height), (-half_width, -half_height), (half_width, -half_height)]
-        for (cx, cy), label in zip(corners, base_labels):
+        if corner_labels is not None:
+            placements = []
+            cx0 = anchor_uv[0] if anchor_uv is not None else 0.5
+            cy0 = anchor_uv[1] if anchor_uv is not None else 0.5
+            for label, (vu, vv) in corner_labels:
+                pu = cx0 + (vu - cx0) * inset
+                pv = cy0 + (vv - cy0) * inset
+                placements.append((
+                    label,
+                    ((pu - 0.5) * ortho_scale, (pv - 0.5) * ortho_scale),
+                    math.atan2(vv - cy0, vu - cx0),
+                ))
+        else:
+            # Fallback for direct callers without a real unwrapped face
+            # (tests exercising canvas mechanics): idealized apex-up
+            # equilateral layout about the canvas center.
+            label = glyph_label(value, glyph_style, die_type)
+            half_width = 0.4
+            half_height = half_width * math.sqrt(3) / 2
+            placements = [
+                (label, (cx * inset * ortho_scale, cy * inset * ortho_scale),
+                 math.atan2(cy, cx))
+                for cx, cy in [(0.0, half_height), (-half_width, -half_height),
+                               (half_width, -half_height)]
+            ]
+        for label, (ox, oy), angle in placements:
             font_size = _proportional_font_size(
                 inradius / size_mm, label,
                 width_per_em=_label_width_per_em(label, font_id, glyph_style),
             ) * DECAL_FONT_CANVAS_SCALE * D4_CORNER_FONT_SCALE
-            angle = math.atan2(cy, cx)
-            ox, oy = cx * inset * ortho_scale, cy * inset * ortho_scale
             bpy.ops.object.text_add(location=(ox, oy, 0))
             txt_obj = bpy.context.active_object
             txt_obj.data.body = label
