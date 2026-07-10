@@ -127,3 +127,16 @@ def test_sample_set_d10_pct_glyph_style_is_always_arabic_numerals():
     for seed in range(50):
         variants = sampler.sample_set(seed)
         assert variants["d10_pct"].glyph_style == "arabic_numerals"
+
+
+def test_sample_set_non_pct_dice_are_not_forced_to_arabic():
+    # The 6 non-percentile dice must receive the set's *sampled* style,
+    # which is non-arabic for most seeds -- guards against a regression
+    # that forces the whole set to arabic along with d10_pct.
+    seen_non_arabic = False
+    for seed in range(50):
+        variants = sampler.sample_set(seed)
+        for dt, v in variants.items():
+            if dt != "d10_pct" and v.glyph_style != "arabic_numerals":
+                seen_non_arabic = True
+    assert seen_non_arabic
