@@ -68,6 +68,13 @@ DIE_SPECS = {
         "expected_verts": 12,
         "expected_edges": 20,
     },
+    "d10_pct": {
+        "num_sides": 10,
+        "base_vertices": _d10_base_vertices(),
+        "expected_faces": 10,
+        "expected_verts": 12,
+        "expected_edges": 20,
+    },
     "d12": {
         "num_sides": 12,
         "base_vertices": (
@@ -168,21 +175,23 @@ def compute_opposite_face_pairs(obj):
 
 def compute_face_poles(obj, die_type):
     """
-    d8 and d10 are both built (see DIE_SPECS / _d10_base_vertices) as
-    bipyramids: exactly two pole vertices at the extremal local-Z
-    positions, plus a ring of equatorial vertices. Every face touches
-    exactly one pole (confirmed empirically this session via direct
-    vertex-index inspection on both die types). Real dice orient each
-    face's numeral relative to its OWN pole, not one global up-vector --
-    see glyphs.py's _tangent_bitangent for the orientation fix this
-    enables, and numbering.py's assign_values_to_opposite_pairs for the
-    matching hemisphere-consistent value assignment.
+    d8, d10, and d10_pct are all built (see DIE_SPECS / _d10_base_vertices)
+    as bipyramids: exactly two pole vertices at the extremal local-Z
+    positions, plus a ring of equatorial vertices. d10_pct shares d10's
+    exact mesh (same base_vertices) -- only the face labels differ, so it
+    has the identical pole structure. Every face touches exactly one pole
+    (confirmed empirically this session via direct vertex-index inspection
+    on both die types). Real dice orient each face's numeral relative to
+    its OWN pole, not one global up-vector -- see glyphs.py's
+    _tangent_bitangent for the orientation fix this enables, and
+    numbering.py's assign_values_to_opposite_pairs for the matching
+    hemisphere-consistent value assignment.
 
     Returns None for die types without this two-pole structure (d4, d6,
     d12, d20) -- those keep their existing single-global-up-vector
     orientation convention unchanged.
     """
-    if die_type not in ("d8", "d10"):
+    if die_type not in ("d8", "d10", "d10_pct"):
         return None
 
     mesh = obj.data

@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 from _harness import run_and_report
 
 
-def test_all_six_dice_build_with_correct_topology():
+def test_all_seven_dice_build_with_correct_topology():
     import bpy
     from dice_gen import geometry
 
@@ -104,7 +104,7 @@ def test_compute_face_poles_maps_every_d8_and_d10_face_to_exactly_one_pole():
     import bpy
     from dice_gen import geometry
 
-    for die_type in ("d8", "d10"):
+    for die_type in ("d8", "d10", "d10_pct"):
         obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
         poles = geometry.compute_face_poles(obj, die_type)
 
@@ -173,6 +173,43 @@ def test_assign_values_to_opposite_pairs_splits_d8_and_d10_hemispheres_by_parity
         assert top_parities != bottom_parities, f"{die_type}: top and bottom ended up with the same parity"
 
         bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def test_assign_values_to_opposite_pairs_splits_d10_pct_hemispheres_by_tens_digit_parity():
+    """
+    d10_pct's own values (0,10,...,90) are all even, so the raw-value
+    parity check used for d8/d10 above doesn't apply directly -- see
+    numbering.py's d10_pct special case, which reuses d10's parity-aware
+    assignment on the underlying 0-9 digit and scales by 10 afterward.
+    This checks the real invariant that scaling is supposed to preserve:
+    the underlying (pre-scale) digit's parity is still split cleanly by
+    hemisphere, exactly as a real d10's is.
+    """
+    import bpy
+    from dice_gen import geometry, numbering
+
+    obj = geometry.build_die_base_mesh("d10_pct", size_mm=18.0)
+    poles = geometry.compute_face_poles(obj, "d10_pct")
+    top_pole = max((p.z, tuple(p)) for p in poles.values())[1]
+
+    hemisphere_of_face = {
+        face_idx: ("top" if tuple(pole) == top_pole else "bottom")
+        for face_idx, pole in poles.items()
+    }
+
+    face_pairs = geometry.compute_opposite_face_pairs(obj)
+    assignment = numbering.assign_values_to_opposite_pairs(
+        "d10_pct", face_pairs, hemisphere_of_face=hemisphere_of_face,
+    )
+    assert numbering.verify_opposite_sum("d10_pct", face_pairs, assignment)
+
+    top_digit_parities = {(assignment[f] // 10) % 2 for f, h in hemisphere_of_face.items() if h == "top"}
+    bottom_digit_parities = {(assignment[f] // 10) % 2 for f, h in hemisphere_of_face.items() if h == "bottom"}
+    assert len(top_digit_parities) == 1, f"d10_pct: top hemisphere has mixed tens-digit parities {top_digit_parities}"
+    assert len(bottom_digit_parities) == 1, f"d10_pct: bottom hemisphere has mixed tens-digit parities {bottom_digit_parities}"
+    assert top_digit_parities != bottom_digit_parities, "d10_pct: top and bottom ended up with the same tens-digit parity"
+
+    bpy.data.objects.remove(obj, do_unlink=True)
 
 
 def test_assign_values_to_opposite_pairs_without_hemisphere_arg_is_unchanged():
@@ -246,13 +283,14 @@ def test_compute_face_inradius_is_smaller_for_d8_and_d20_than_d6_and_d12_at_same
 
 
 def run():
-    test_all_six_dice_build_with_correct_topology()
+    test_all_seven_dice_build_with_correct_topology()
     test_opposite_face_pairs_are_geometrically_antiparallel_for_d6()
     test_d4_opposite_face_pairs_returns_two_pairs_covering_all_faces()
     test_build_die_base_mesh_marks_all_edges_with_full_bevel_weight()
     test_compute_face_poles_maps_every_d8_and_d10_face_to_exactly_one_pole()
     test_compute_face_poles_returns_none_for_non_bipyramid_dice()
     test_assign_values_to_opposite_pairs_splits_d8_and_d10_hemispheres_by_parity()
+    test_assign_values_to_opposite_pairs_splits_d10_pct_hemispheres_by_tens_digit_parity()
     test_assign_values_to_opposite_pairs_without_hemisphere_arg_is_unchanged()
     test_compute_face_inradius_matches_known_values_for_a_cube()
     test_compute_face_inradius_is_smaller_for_d8_and_d20_than_d6_and_d12_at_same_size()
