@@ -50,3 +50,38 @@ def test_d4_has_no_opposite_sum_rule_but_assigns_all_values_once():
     face_pairs = [(0, 1), (2, 3)]
     assignment = numbering.assign_values_to_opposite_pairs("d4", face_pairs)
     assert set(assignment.values()) == {1, 2, 3, 4}
+
+
+def test_get_values_d10_pct_has_10_unique_values_multiples_of_ten():
+    values = numbering.get_values("d10_pct")
+    assert len(values) == 10
+    assert set(values) == {0, 10, 20, 30, 40, 50, 60, 70, 80, 90}
+
+
+def test_d10_pct_opposite_faces_sum_to_90():
+    face_pairs = [(i, i + 5) for i in range(5)]
+    assignment = numbering.assign_values_to_opposite_pairs("d10_pct", face_pairs)
+    assert numbering.verify_opposite_sum("d10_pct", face_pairs, assignment)
+    assert set(assignment.values()) == {0, 10, 20, 30, 40, 50, 60, 70, 80, 90}
+
+
+def test_d10_pct_assignment_is_d10_assignment_scaled_by_ten():
+    face_pairs = [(i, i + 5) for i in range(5)]
+    d10_assignment = numbering.assign_values_to_opposite_pairs("d10", face_pairs)
+    pct_assignment = numbering.assign_values_to_opposite_pairs("d10_pct", face_pairs)
+    assert pct_assignment == {face: value * 10 for face, value in d10_assignment.items()}
+
+
+def test_d10_pct_assignment_respects_hemisphere_parity_split():
+    face_pairs = [(i, i + 5) for i in range(5)]
+    hemisphere_of_face = {
+        0: "top", 1: "top", 2: "bottom", 3: "bottom", 4: "top",
+        5: "bottom", 6: "bottom", 7: "top", 8: "bottom", 9: "top",
+    }
+    d10_assignment = numbering.assign_values_to_opposite_pairs(
+        "d10", face_pairs, hemisphere_of_face=hemisphere_of_face,
+    )
+    pct_assignment = numbering.assign_values_to_opposite_pairs(
+        "d10_pct", face_pairs, hemisphere_of_face=hemisphere_of_face,
+    )
+    assert pct_assignment == {face: value * 10 for face, value in d10_assignment.items()}

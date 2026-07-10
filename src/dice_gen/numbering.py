@@ -5,11 +5,16 @@ d4 (tetrahedron) has no face-to-face antipodal relationship (its faces are
 opposite a *vertex*, not another face), so it has no opposite_sum rule —
 values are just assigned once each. All other die types are centrally
 symmetric and follow their standard convention:
-  d6:  opposite faces sum to 7
-  d8:  opposite faces sum to 9
-  d10: opposite faces sum to 9 (values 0-9, pairing k with 9-k)
-  d12: opposite faces sum to 13
-  d20: opposite faces sum to 21
+  d6:      opposite faces sum to 7
+  d8:      opposite faces sum to 9
+  d10:     opposite faces sum to 9 (values 0-9, pairing k with 9-k)
+  d10_pct: opposite faces sum to 90 (percentile/tens die, values
+           0,10,...,90 -- same physical mold as d10, different digits
+           printed on each face; see assign_values_to_opposite_pairs'
+           d10_pct special case for why this scales d10's own assignment
+           rather than running through the generic scheme below)
+  d12:     opposite faces sum to 13
+  d20:     opposite faces sum to 21
 """
 
 NUMBERING_SCHEMES = {
@@ -17,6 +22,7 @@ NUMBERING_SCHEMES = {
     "d6": {"values": [1, 2, 3, 4, 5, 6], "opposite_sum": 7},
     "d8": {"values": [1, 2, 3, 4, 5, 6, 7, 8], "opposite_sum": 9},
     "d10": {"values": list(range(0, 10)), "opposite_sum": 9},
+    "d10_pct": {"values": [v * 10 for v in range(0, 10)], "opposite_sum": 90},
     "d12": {"values": list(range(1, 13)), "opposite_sum": 13},
     "d20": {"values": list(range(1, 21)), "opposite_sum": 21},
 }
@@ -49,6 +55,19 @@ def assign_values_to_opposite_pairs(die_type, face_pairs, hemisphere_of_face=Non
 
     Returns {face_index: value}.
     """
+    if die_type == "d10_pct":
+        # Same physical mold as d10, different digits printed on each
+        # face. d10_pct's own values (0,10,...,90) are all even, so
+        # running them directly through the generic even/odd hemisphere
+        # split below would find no parity variance to split on. Instead,
+        # reuse d10's own assignment (which already solves the real
+        # hemisphere-parity problem on the underlying 0-9 digit) and
+        # scale every value x10 for display.
+        base_assignment = assign_values_to_opposite_pairs(
+            "d10", face_pairs, hemisphere_of_face=hemisphere_of_face,
+        )
+        return {face: value * 10 for face, value in base_assignment.items()}
+
     scheme = NUMBERING_SCHEMES[die_type]
     values = scheme["values"]
     opposite_sum = scheme["opposite_sum"]
