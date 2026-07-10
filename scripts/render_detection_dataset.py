@@ -364,16 +364,52 @@ def main_blender():
             })
             ann_id += 1
 
+    shard_path = os.path.join(args.outdir, f"coco_shard{args.shard}.json")
+
+    def write_shard():
+        tmp = shard_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"images": coco_images, "annotations": coco_annotations}, f)
+        os.replace(tmp, shard_path)
+
+    # Resume support: a killed worker loses nothing but its last few
+    # scenes. Annotations are checkpointed every CHECKPOINT_EVERY scenes
+    # (the first run of this script wrote the shard file only at the
+    # very end -- a mid-run kill orphaned 6,193 rendered images with no
+    # annotations). A scene counts as done only if it's in the
+    # checkpoint AND its JPEG exists on disk.
+    done_indices = set()
+    if os.path.exists(shard_path):
+        prev = json.load(open(shard_path))
+        for im in prev["images"]:
+            idx = int(im["file_name"].split("_")[1].split(".")[0])
+            if os.path.exists(os.path.join(args.outdir, im["file_name"])):
+                done_indices.add(idx)
+        coco_images.extend(
+            im for im in prev["images"]
+            if int(im["file_name"].split("_")[1].split(".")[0]) in done_indices)
+        kept_ids = {im["id"] for im in coco_images}
+        coco_annotations.extend(
+            a for a in prev["annotations"] if a["image_id"] in kept_ids)
+        ann_id = max((a["id"] for a in coco_annotations), default=0) + 1
+        print(f"SHARD{args.shard} RESUMING: {len(done_indices)} scenes already done")
+
+    CHECKPOINT_EVERY = 20
     rng_master = random.Random(args.seed)
     scene_seeds = [rng_master.getrandbits(48) for _ in range(args.count)]
     my_indices = [i for i in range(args.count) if i % args.shards == args.shard]
+    since_checkpoint = 0
     for n, i in enumerate(my_indices):
+        if i in done_indices:
+            continue
         compose(i, random.Random(scene_seeds[i]))
+        since_checkpoint += 1
+        if since_checkpoint >= CHECKPOINT_EVERY:
+            write_shard()
+            since_checkpoint = 0
         print(f"SHARD{args.shard} RENDERED {n + 1}/{len(my_indices)}", flush=True)
 
-    shard_path = os.path.join(args.outdir, f"coco_shard{args.shard}.json")
-    with open(shard_path, "w") as f:
-        json.dump({"images": coco_images, "annotations": coco_annotations}, f)
+    write_shard()
     print(f"SHARD{args.shard} DONE -> {shard_path}")
 
 
