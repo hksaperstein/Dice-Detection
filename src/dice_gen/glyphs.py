@@ -40,8 +40,12 @@ ENGRAVE_CUTTER_HALF_THICKNESS_FRACTION = 0.01
 # 3 corner numerals share a d4 face -- scale each down from the single-
 # centered-numeral size so all three fit without crowding the center,
 # each other, or the face edges (0.6 clipped roman labels like "IV"
-# against the edge -- seen in a real render).
-D4_CORNER_FONT_SCALE = 0.42
+# against the edge; 0.42 at inset 0.45 left them small and hugging the
+# corners with a large empty center -- both seen in real renders, both
+# user-reported). 0.5 with inset 0.40 matches how real vertex-read d4s
+# sit their numerals: clearly nearer the vertex than the center, but
+# with visible margin to both.
+D4_CORNER_FONT_SCALE = 0.5
 # 0.9 (raised from 0.5): at 0.5 an engraved single-character numeral's em
 # size was half the face inradius (cap height ~0.35r) -- visually ~2x
 # smaller relative to its face than the same label on the decal path,
@@ -657,7 +661,7 @@ def _boolean_diff_apply(die_obj, cutter_obj):
     return warning
 
 
-def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.45):
+def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.40):
     """
     Returns one (vertex_index, orientation matrix) pair per vertex of
     `face`, for d4's vertex-read numeral convention: real vertex-read d4
@@ -675,10 +679,10 @@ def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.45):
     center toward that vertex, projected into the face plane -- i.e.
     each copy points radially outward toward its own corner, matching
     the 120-degree-apart rotational pattern real vertex-read d4s show.
-    `inset` places each copy 45% of the way from the face center to the
-    vertex (was 0.55; pulled inward with the corner-size reduction after
-    a real render showed rotated 2-character labels clipping the face
-    edge at the old placement).
+    `inset` places each copy 40% of the way from the face center to the
+    vertex (0.55 clipped rotated 2-character labels against the face
+    edge; 0.45 still read as corner-hugging with an empty center -- both
+    seen in real renders).
     """
     center = obj_matrix @ face.center
     normal = (obj_matrix.to_3x3() @ face.normal).normalized()
@@ -1191,7 +1195,11 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
 
     base_mat = die_obj.data.materials[0] if len(die_obj.data.materials) > 0 else None
 
-    resolution = 256
+    # 512 (was 256): at 256 a d4's corner-placed numerals occupy so few
+    # texels that strokes render visibly blurry even in modest close-ups
+    # (user-reported); 512 quadruples texel density for every decal face
+    # at modest per-face render cost.
+    resolution = 512
 
     # The base material is identical across every face of a die, so its
     # appearance only needs to be rendered once, not per-face.
@@ -1425,7 +1433,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
             glyph_label(value, glyph_style, die_type)
         ] * 3
         ortho_scale = 1.4
-        inset = 0.45
+        inset = 0.40
         half_width = 0.4
         half_height = half_width * math.sqrt(3) / 2
         corners = [(0.0, half_height), (-half_width, -half_height), (half_width, -half_height)]
