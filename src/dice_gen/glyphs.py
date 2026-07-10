@@ -37,15 +37,17 @@ ENGRAVE_DEPTH_FRACTION = 0.003
 # (2 * this - depth) above the face and only ENGRAVE_DEPTH_FRACTION
 # below it.
 ENGRAVE_CUTTER_HALF_THICKNESS_FRACTION = 0.01
-# 3 corner numerals share a d4 face. A d4's faces are proportionally
-# huge (inradius ~0.41 of die size, vs ~0.13 for a d20), so the corner
-# copies can be confident: at 0.5 the numerals spanned only ~9% of the
-# edge length where real vertex-read d4s run ~20-25%, reading as small
-# with a dead center (user feedback, twice). 0.8 at inset 0.42 fills
-# each corner region while keeping clear margins -- the median from
-# centroid to vertex is 2*inradius long, leaving ~0.9r of clearance to
-# the vertex even for the widest rotated 2-character labels.
-D4_CORNER_FONT_SCALE = 0.8
+# Em size of every d4 corner numeral, as a fraction of the face
+# inradius -- CONSTANT per die, deliberately not routed through
+# _proportional_font_size's character-count shrink: that shrink exists
+# to fit long labels on small faces, but on a d4's huge face (inradius
+# ~0.41 of die size) it made I, II, III and IV render at visibly
+# different heights on the same die (user feedback, third round of d4
+# sizing). Real dice keep numeral cap height constant and let width
+# vary; wide labels are protected by the corner clearance clamp below
+# instead. 0.85r em = ~0.6r cap height = ~17% of the edge length,
+# in real vertex-read d4 territory.
+D4_CORNER_EM_INRADIUS_FRACTION = 0.85
 # How far along its median (face centroid -> vertex) each d4 corner copy
 # sits; shared by the engraved and decal paths and by the corner
 # clearance clamps, which depend on it geometrically.
@@ -684,10 +686,10 @@ def _face_vertex_orientations(mesh, face, obj_matrix, inset=D4_CORNER_INSET):
     each copy points radially outward toward its own corner, matching
     the 120-degree-apart rotational pattern real vertex-read d4s show.
     `inset` places each copy 42% of the way from the face center to the
-    vertex, tuned together with D4_CORNER_FONT_SCALE against real
-    renders (0.55 clipped rotated 2-character labels against the face
-    edge; smaller insets with small fonts read as corner-hugging around
-    a dead center).
+    vertex, tuned together with D4_CORNER_EM_INRADIUS_FRACTION against
+    real renders (0.55 clipped rotated 2-character labels against the
+    face edge; smaller insets with small fonts read as corner-hugging
+    around a dead center).
     """
     center = obj_matrix @ face.center
     normal = (obj_matrix.to_3x3() @ face.normal).normalized()
@@ -750,9 +752,7 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
                 v_value = vertex_values[vertex_index]
                 v_label = glyph_label(v_value, glyph_style, die_type)
                 width_per_em = _label_width_per_em(v_label, font_id, glyph_style)
-                v_size = _proportional_font_size(
-                    inradius, v_label, width_per_em=width_per_em,
-                ) * D4_CORNER_FONT_SCALE
+                v_size = inradius * D4_CORNER_EM_INRADIUS_FRACTION
                 # Corner clearance clamp: a corner copy sits inset of
                 # the way up its median, where clearance to the two
                 # adjacent edges is (1 - inset) * r -- and keeps
@@ -1485,9 +1485,15 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
             ]
         for label, (ox, oy), angle in placements:
             width_per_em = _label_width_per_em(label, font_id, glyph_style)
-            font_size = _proportional_font_size(
-                inradius / size_mm, label, width_per_em=width_per_em,
-            ) * DECAL_FONT_CANVAS_SCALE * D4_CORNER_FONT_SCALE
+            # Constant em height for every value on the die (see
+            # D4_CORNER_EM_INRADIUS_FRACTION), in canvas units via the
+            # face_span mapping; falls back to the span-free approximation
+            # (inradius/span for an equilateral triangle) if span is absent.
+            if face_span:
+                inradius_canvas_em = (inradius / face_span) * 1.12
+            else:
+                inradius_canvas_em = 0.2887 * 1.12
+            font_size = inradius_canvas_em * D4_CORNER_EM_INRADIUS_FRACTION
             # Corner clearance clamp, mirroring the engraved path (see
             # its comment for the geometry: the binding constraint is at
             # the glyph's TOP corners, which sit closer to the
