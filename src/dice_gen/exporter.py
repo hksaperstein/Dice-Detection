@@ -30,8 +30,6 @@ import os
 import bmesh
 import bpy
 
-from .glyphs import RECESS_SOFTEN_ATTR
-
 
 def export_asset(die_obj, manifest_record, outdir, bevel_fraction, size_mm):
     os.makedirs(outdir, exist_ok=True)
@@ -39,32 +37,36 @@ def export_asset(die_obj, manifest_record, outdir, bevel_fraction, size_mm):
 
     bpy.context.view_layer.objects.active = die_obj
 
-    # Tiny edge-softening pass over the engraving's own crease edges
-    # (recess rims + wall/floor junctions -- see glyphs.py's
-    # _mark_recess_soften_edges), run BEFORE the structural bevel so it
-    # operates on the un-rebuilt boolean output; targets its own edge
-    # attribute via the modifier's edge_weight name, fully independent of
-    # the structural bevel_weight_edge marks. offset_type='PERCENT' (of
-    # each edge's own adjacent-edge length) is load-bearing, not
-    # cosmetic: an absolute width -- even one tied to the already-tiny
-    # cut depth -- collapses the EXACT boolean output's many short sliver
-    # edges into degenerate faces (measured on a real engraved d20:
-    # 7,198 zero-area faces at absolute half-depth width vs 73 at
-    # PERCENT 20, against a 29-face pre-soften baseline).
-    if die_obj.data.attributes.get(RECESS_SOFTEN_ATTR) is not None:
-        soften = die_obj.modifiers.new(name="RecessSoften", type='BEVEL')
-        soften.offset_type = 'PERCENT'
-        soften.width_pct = 20.0
-        soften.segments = 2
-        soften.limit_method = 'WEIGHT'
-        soften.edge_weight = RECESS_SOFTEN_ATTR
-        bpy.ops.object.modifier_apply(modifier=soften.name)
-
     mod = die_obj.modifiers.new(name="Bevel", type='BEVEL')
     mod.width = size_mm * bevel_fraction
     mod.segments = 8
     mod.limit_method = 'WEIGHT'
     bpy.ops.object.modifier_apply(modifier=mod.name)
+
+    # Soften every edge by SHADING, not geometry: smooth-shade all
+    # polygons, then apply face-area-weighted normals so the die's large
+    # flat faces dominate their own vertices' normals (staying visually
+    # flat) while small faces -- structural bevel segments and engraving
+    # recess rims/walls -- blend softly into their surroundings. This is
+    # what makes engraved edges read as "softened": at realistic
+    # engraving depths the recess is far too small for any geometric
+    # rounding to be visible, and both geometric micro-bevel attempts
+    # measurably corrupted the mesh (absolute width: thousands of
+    # degenerate sliver faces; percent width: rim vertices smeared
+    # millimeters along the big face polygon's long edges, shredding
+    # numerals into spike artifacts -- both confirmed on real dice).
+    # Plain shade-smooth WITHOUT weighted normals is also wrong: the big
+    # n-gon faces render pillowy because their boundary vertices average
+    # in recess-wall and bevel normals.
+    die_obj.data.polygons.foreach_set(
+        "use_smooth", [True] * len(die_obj.data.polygons)
+    )
+    die_obj.data.update()
+    wn = die_obj.modifiers.new(name="SoftNormals", type='WEIGHTED_NORMAL')
+    wn.mode = 'FACE_AREA'
+    wn.weight = 100
+    wn.keep_sharp = False
+    bpy.ops.object.modifier_apply(modifier=wn.name)
 
     bpy.ops.object.select_all(action='DESELECT')
     die_obj.select_set(True)

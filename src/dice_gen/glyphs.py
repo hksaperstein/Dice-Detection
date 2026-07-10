@@ -15,26 +15,23 @@ from mathutils import Vector, Matrix
 from .geometry import compute_face_poles, compute_face_inradius
 from .numbering import d4_vertex_values
 
-# "A fraction of a fraction of a fraction of a fingernail deep" (direct
-# user spec): 0.003 of die size = 0.04-0.07mm across the sampled size
-# range, vs a ~0.4mm fingernail. Visibility comes from the always-painted
-# contrasting fill, not depth. History: 0.04 -> 0.03 -> 0.02 -> 0.01 ->
-# 0.003, each step a direct user request for shallower.
-ENGRAVE_DEPTH_FRACTION = 0.003
+# 0.01 is the empirically-found FLOOR for reliable boolean text cuts, not
+# an aesthetic choice: the user asked for "a fraction of a fraction of a
+# fraction of a fingernail" (~0.05mm), but at 0.003 the EXACT/FLOAT
+# solvers fragment or entirely drop glyph cuts WITHOUT raising any
+# warning (verified on a real d20: same die/labels cut clean at 0.01,
+# shredded at 0.003, vanished at 0.006 -- the roadmap item-1 "silent
+# partial cut" gap in action). The requested visually-ultra-shallow look
+# comes instead from exporter.export_asset's smooth-shading +
+# weighted-normals pass, which renders the 0.01 recess soft and subtle.
+# History: 0.04 -> 0.03 -> 0.02 -> 0.01, each a user request for
+# shallower; 0.003 attempted and reverted for the above reason.
+ENGRAVE_DEPTH_FRACTION = 0.01
 # 3 corner numerals share a d4 face -- scale each down from the single-
-# centered-numeral size so all three fit without crowding the center or
-# each other.
-D4_CORNER_FONT_SCALE = 0.6
-# Edge float attribute marking every crease edge the engraving cuts
-# introduced (recess rims + wall/floor junctions). exporter.export_asset
-# runs a second, tiny WEIGHT-limited bevel targeting THIS attribute (the
-# Bevel modifier's edge_weight property selects it by name), fully
-# independent of the structural bevel_weight_edge marks -- softening the
-# engraving's edges without touching the die's own silhouette. This is
-# the die-side post-cut approach; beveling the CUTTER pre-cut was tried
-# and reverted (it inverted the boolean -- added material instead of
-# subtracting -- for every digit with an enclosed hole: 6, 8, 0).
-RECESS_SOFTEN_ATTR = "recess_soften_weight"
+# centered-numeral size so all three fit without crowding the center,
+# each other, or the face edges (0.6 clipped roman labels like "IV"
+# against the edge -- seen in a real render).
+D4_CORNER_FONT_SCALE = 0.42
 # 0.9 (raised from 0.5): at 0.5 an engraved single-character numeral's em
 # size was half the face inradius (cap height ~0.35r) -- visually ~2x
 # smaller relative to its face than the same label on the decal path,
@@ -650,7 +647,7 @@ def _boolean_diff_apply(die_obj, cutter_obj):
     return warning
 
 
-def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.55):
+def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.45):
     """
     Returns one (vertex_index, orientation matrix) pair per vertex of
     `face`, for d4's vertex-read numeral convention: real vertex-read d4
@@ -668,9 +665,10 @@ def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.55):
     center toward that vertex, projected into the face plane -- i.e.
     each copy points radially outward toward its own corner, matching
     the 120-degree-apart rotational pattern real vertex-read d4s show.
-    `inset` places each copy 55% of the way from the face center to the
-    vertex (tested empirically: keeps the numeral clear of both the
-    face center and the beveled edge).
+    `inset` places each copy 45% of the way from the face center to the
+    vertex (was 0.55; pulled inward with the corner-size reduction after
+    a real render showed rotated 2-character labels clipping the face
+    edge at the old placement).
     """
     center = obj_matrix @ face.center
     normal = (obj_matrix.to_3x3() @ face.normal).normalized()
@@ -796,52 +794,7 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
     if glyph_fill == "painted":
         _assign_fill_material_to_recessed_faces(die_obj)
 
-    _mark_recess_soften_edges(die_obj)
-
     return warnings
-
-
-def _mark_recess_soften_edges(die_obj, min_crease_deg=10.0):
-    """
-    Marks every crease edge the engraving cuts introduced into the
-    RECESS_SOFTEN_ATTR edge attribute, for exporter.export_asset's tiny
-    edge-softening bevel. Cut-created edges are exactly the edges WITHOUT
-    the full structural bevel_weight_edge mark build_die_base_mesh stamps
-    on the pristine polyhedron pre-cut (boolean cuts never rebuild those
-    untouched edges -- the same invariant the structural bevel already
-    relies on). Near-flat edges (below min_crease_deg dihedral) are left
-    unmarked: beveling a coplanar edge adds geometry without changing
-    appearance, and the boolean output is full of them (face
-    triangulation around each glyph outline).
-    """
-    mesh = die_obj.data
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
-    structural = bm.edges.layers.float.get('bevel_weight_edge')
-    soften = bm.edges.layers.float.get(RECESS_SOFTEN_ATTR)
-    if soften is None:
-        soften = bm.edges.layers.float.new(RECESS_SOFTEN_ATTR)
-
-    marked = 0
-    bm.normal_update()
-    for e in bm.edges:
-        if structural is not None and e[structural] > 0.5:
-            continue
-        if len(e.link_faces) != 2:
-            continue
-        try:
-            angle = e.calc_face_angle()
-        except ValueError:
-            continue
-        if angle < math.radians(min_crease_deg):
-            continue
-        e[soften] = 1.0
-        marked += 1
-
-    bm.to_mesh(mesh)
-    mesh.update()
-    bm.free()
-    return marked
 
 
 def _assign_fill_material_to_recessed_faces(die_obj):
@@ -1433,7 +1386,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
             glyph_label(value, glyph_style, die_type)
         ] * 3
         ortho_scale = 1.4
-        inset = 0.55
+        inset = 0.45
         half_width = 0.4
         half_height = half_width * math.sqrt(3) / 2
         corners = [(0.0, half_height), (-half_width, -half_height), (half_width, -half_height)]

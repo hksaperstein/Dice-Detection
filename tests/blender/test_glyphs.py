@@ -1909,14 +1909,19 @@ def test_proportional_font_size_shrinks_for_longer_labels():
 
 def test_engrave_depth_fraction_is_shallower_than_prior_value():
     """
-    Explicit user request, repeatedly: 0.04 -> 0.03 -> 0.02 -> 0.01 ->
-    0.003 ("a fraction of a fraction of a fraction of a fingernail
-    deep"), paired with always-painted contrasting fill so visibility
-    comes from color, not depth.
+    Explicit user request, repeatedly: 0.04 -> 0.03 -> 0.02 -> 0.01.
+    0.003 was attempted (user asked for fingernail-fraction depth) and
+    reverted: below 0.01 the boolean solvers fragment or silently drop
+    glyph cuts entirely (verified on a real d20 at 0.003 and 0.006, zero
+    warnings raised either time). 0.01 is the reliability floor; the
+    ultra-shallow LOOK comes from the exporter's weighted-normal
+    softening pass instead. Do not lower this again without first
+    building the roadmap item-1 "did the numeral actually engrave"
+    check.
     """
     from dice_gen.glyphs import ENGRAVE_DEPTH_FRACTION
 
-    assert ENGRAVE_DEPTH_FRACTION == 0.003
+    assert ENGRAVE_DEPTH_FRACTION == 0.01
 
 
 def run():
