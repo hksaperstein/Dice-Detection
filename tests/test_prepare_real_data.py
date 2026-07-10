@@ -4,7 +4,10 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from prepare_real_data import remap_label_line, SOURCE_NAME_MAP, group_pairs_by_augmentation, split_groups
+from prepare_real_data import (
+    remap_label_line, SOURCE_NAME_MAP, group_pairs_by_augmentation, split_groups,
+    should_exclude_stem, EXCLUDE_STEM_PREFIXES
+)
 
 
 def test_known_names_map_to_our_taxonomy():
@@ -90,3 +93,12 @@ def test_test_split_behavior_keeps_one_per_group():
     # The lex-first is stem_jpg.rf.aaa.jpg
     sorted_pairs = sorted(pairs, key=lambda p: str(p[0]))
     assert str(sorted_pairs[0][0]) == "stem_jpg.rf.aaa.jpg"
+
+
+def test_should_exclude_stem_filters_by_source_and_prefix():
+    # Under-labeled multi-dice scenes in dd_dice (all_dice_*) are excluded.
+    # Same prefix in other sources should not be excluded.
+    assert should_exclude_stem("dd_dice", "all_dice_paper_jpg") is True
+    assert should_exclude_stem("dd_dice", "all_dice_tray_jpg") is True
+    assert should_exclude_stem("dd_dice", "d10_top002_jpg") is False
+    assert should_exclude_stem("dnd_dices", "all_dice_paper_jpg") is False

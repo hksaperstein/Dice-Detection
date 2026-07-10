@@ -30,6 +30,25 @@ SOURCES = [
     {"workspace": "thomas-phillips-t0qi6", "project": "d-d-dice-detection", "slug": "dd_dice"},
 ]
 
+# Source-specific exclusions: stem prefixes to skip (before .rf. suffix).
+# dd_dice's "all_dice_*" images are multi-dice scenes with only 1-2 boxes labeled;
+# under-labeled images poison detection training (unlabeled dice become hard negatives).
+# Visually verified 2026-07-10: 14 images (2 originals, 7 augmented copies each) excluded.
+# All other dd_dice families single-die, correctly labeled; dnd_dices has no exclusions.
+EXCLUDE_STEM_PREFIXES = {
+    "dd_dice": ("all_dice",),
+}
+
+
+def should_exclude_stem(source_slug, stem_before_rf):
+    """Check if a stem should be excluded for a given source."""
+    if source_slug not in EXCLUDE_STEM_PREFIXES:
+        return False
+    for prefix in EXCLUDE_STEM_PREFIXES[source_slug]:
+        if stem_before_rf.startswith(prefix):
+            return True
+    return False
+
 
 def remap_label_line(line, src_names):
     """Remap one YOLO label line from a source dataset's class order to ours.
@@ -171,6 +190,8 @@ def main():
 
         # Process test groups: keep only one image per group (lex-first)
         for stem_key, group_pairs in test_groups.items():
+            if should_exclude_stem(src["slug"], stem_key):
+                continue  # skip excluded stems (e.g., under-labeled multi-dice scenes)
             sorted_pairs = sorted(group_pairs, key=lambda p: str(p[0]))
             for idx, (img, lbl) in enumerate(sorted_pairs):
                 if idx > 0:
@@ -189,6 +210,8 @@ def main():
 
         # Process finetune groups: keep all images (augmentation for training)
         for stem_key, group_pairs in finetune_groups.items():
+            if should_exclude_stem(src["slug"], stem_key):
+                continue  # skip excluded stems (e.g., under-labeled multi-dice scenes)
             for img, lbl in group_pairs:
                 remapped = [
                     r for line in lbl.read_text().splitlines() if line.strip()
