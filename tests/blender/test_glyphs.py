@@ -16,6 +16,71 @@ def test_glyph_label_formats():
     assert glyphs.glyph_label(9, "roman_numerals") == "IX"
 
 
+def test_glyph_label_formats_d10_pct_as_zero_padded_two_digit():
+    from dice_gen import glyphs
+
+    assert glyphs.glyph_label(0, "arabic_numerals", die_type="d10_pct") == "00"
+    assert glyphs.glyph_label(10, "arabic_numerals", die_type="d10_pct") == "10"
+    assert glyphs.glyph_label(90, "arabic_numerals", die_type="d10_pct") == "90"
+
+
+def test_glyph_label_arabic_unchanged_for_non_percentile_die_types():
+    from dice_gen import glyphs
+
+    assert glyphs.glyph_label(0, "arabic_numerals", die_type="d10") == "0"
+    assert glyphs.glyph_label(6, "arabic_numerals") == "6"
+    assert glyphs.glyph_label(6, "arabic_numerals", die_type="d6") == "6"
+
+
+def test_engraved_glyphs_reduce_solid_volume_for_d10_pct():
+    """
+    Mirrors test_engraved_glyphs_reduce_solid_volume (d6) but for d10_pct
+    specifically -- exercises all 10 faces with real 2-character
+    zero-padded labels ("00".."90") through the full engrave/boolean-cut
+    path, catching any font-size or cutter regression the 2-digit label
+    might introduce that a pure glyph_label unit test can't see.
+    """
+    import bpy
+    from dice_gen import geometry, numbering, glyphs
+
+    die_type = "d10_pct"
+    obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
+    pairs = geometry.compute_opposite_face_pairs(obj)
+    poles = geometry.compute_face_poles(obj, die_type)
+    top_pole_z = max(p.z for p in poles.values())
+    hemisphere_of_face = {
+        face_idx: ("top" if pole.z == top_pole_z else "bottom")
+        for face_idx, pole in poles.items()
+    }
+    assignment = numbering.assign_values_to_opposite_pairs(
+        die_type, pairs, hemisphere_of_face=hemisphere_of_face,
+    )
+    assert numbering.verify_opposite_sum(die_type, pairs, assignment)
+
+    import bmesh
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    volume_before = bm.calc_volume()
+    bm.free()
+
+    warnings = glyphs.apply_engraved_glyphs(
+        obj, die_type, assignment,
+        glyph_style="arabic_numerals", glyph_fill="painted",
+        font_id="font_sans_bold", size_mm=18.0,
+    )
+
+    bm2 = bmesh.new()
+    bm2.from_mesh(obj.data)
+    volume_after = bm2.calc_volume()
+    bm2.free()
+
+    assert volume_after < volume_before, "engraving should remove material"
+    assert len(obj.data.materials) >= 2, "painted fill should add a second material slot"
+    assert warnings == [], f"expected no engraving warnings on a clean d10_pct cut, got {warnings}"
+
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def test_engraved_glyphs_reduce_solid_volume():
     import bpy
     from dice_gen import geometry, numbering, glyphs
@@ -1837,6 +1902,9 @@ def test_engrave_depth_fraction_is_shallower_than_prior_value():
 
 def run():
     test_glyph_label_formats()
+    test_glyph_label_formats_d10_pct_as_zero_padded_two_digit()
+    test_glyph_label_arabic_unchanged_for_non_percentile_die_types()
+    test_engraved_glyphs_reduce_solid_volume_for_d10_pct()
     test_proportional_font_size_shrinks_for_longer_labels()
     test_engraved_glyphs_reduce_solid_volume()
     test_engraved_glyphs_blank_fill_does_not_add_second_material()

@@ -104,8 +104,10 @@ CJK_NUMERALS = {
 }
 
 
-def glyph_label(value, glyph_style):
+def glyph_label(value, glyph_style, die_type=None):
     if glyph_style == "arabic_numerals":
+        if die_type == "d10_pct":
+            return f"{value:02d}"
         return str(value)
     if glyph_style == "roman_numerals":
         return ROMAN_NUMERALS.get(value, str(value))
@@ -587,7 +589,7 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
             font_size = None
         else:
             inradius = compute_face_inradius(die_obj.data, face, die_obj.matrix_world)
-            label = glyph_label(value, glyph_style)
+            label = glyph_label(value, glyph_style, die_type)
             font_size = _proportional_font_size(inradius, label)
         if is_d4_vertex_numerals:
             for orient in _face_vertex_orientations(die_obj.data, face, die_obj.matrix_world):
@@ -612,7 +614,7 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
                 if cut_warning is not None:
                     warnings.append(cut_warning)
         else:
-            label = glyph_label(value, glyph_style)
+            label = glyph_label(value, glyph_style, die_type)
             bpy.ops.object.text_add()
             txt_obj = bpy.context.active_object
             txt_obj.data.body = label
@@ -1101,7 +1103,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
         # full-pipeline render (real UV unwrap + composite + 3D render)
         # during this fix: all three copies now appear at the face's
         # actual three corners.
-        label = glyph_label(value, glyph_style)
+        label = glyph_label(value, glyph_style, die_type)
         font_size = _proportional_font_size(inradius / size_mm, label) * DECAL_FONT_CANVAS_SCALE
         ortho_scale = 1.4
         inset = 0.55
@@ -1128,7 +1130,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
             scene.collection.objects.link(txt_obj)
             glyph_objs.append(txt_obj)
     else:
-        label = glyph_label(value, glyph_style)
+        label = glyph_label(value, glyph_style, die_type)
         font_size = _proportional_font_size(inradius / size_mm, label) * DECAL_FONT_CANVAS_SCALE
         bpy.ops.object.text_add(location=(0, 0, 0))
         txt_obj = bpy.context.active_object
