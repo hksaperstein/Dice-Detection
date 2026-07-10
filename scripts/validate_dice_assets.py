@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from dice_gen import numbering
 
-EXPECTED_SET_DIE_TYPES = {"d4", "d6", "d8", "d10", "d12", "d20"}
+EXPECTED_SET_DIE_TYPES = {"d4", "d6", "d8", "d10", "d10_pct", "d12", "d20"}
 
 
 def validate(outdir):

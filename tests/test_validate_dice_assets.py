@@ -132,7 +132,7 @@ def _set_record(tmp_path, asset_id, die_type, set_id):
     thumb_name = f"{asset_id}_thumb.png"
     open(os.path.join(tmp_path, usd_name), "w").write("x")
     open(os.path.join(tmp_path, thumb_name), "w").close()
-    num_sides = {"d4": 4, "d6": 6, "d8": 8, "d10": 10, "d12": 12, "d20": 20}[die_type]
+    num_sides = {"d4": 4, "d6": 6, "d8": 8, "d10": 10, "d10_pct": 10, "d12": 12, "d20": 20}[die_type]
     return {
         "asset_id": asset_id, "die_type": die_type, "num_sides": num_sides,
         "usd_path": usd_name, "thumbnail_path": thumb_name, "set_id": set_id,
@@ -142,7 +142,7 @@ def _set_record(tmp_path, asset_id, die_type, set_id):
 def test_validate_passes_for_complete_set():
     import tempfile
     with tempfile.TemporaryDirectory() as tmp_path:
-        die_types = ["d4", "d6", "d8", "d10", "d12", "d20"]
+        die_types = ["d4", "d6", "d8", "d10", "d10_pct", "d12", "d20"]
         records = [
             _set_record(tmp_path, f"set_00000_{dt}", dt, "set_00000")
             for dt in die_types
@@ -168,3 +168,20 @@ def test_validate_reports_missing_die_type_in_set():
         assert len(set_errors) == 1
         assert "missing die types" in set_errors[0]
         assert "d20" in set_errors[0]
+
+
+def test_validate_reports_missing_percentile_die_in_set():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_path:
+        die_types = ["d4", "d6", "d8", "d10", "d12", "d20"]  # missing d10_pct
+        records = [
+            _set_record(tmp_path, f"set_00000_{dt}", dt, "set_00000")
+            for dt in die_types
+        ]
+        _write_manifest(tmp_path, records)
+
+        errors = validate(tmp_path)
+        set_errors = [e for e in errors if "set_00000" in e]
+        assert len(set_errors) == 1
+        assert "missing die types" in set_errors[0]
+        assert "d10_pct" in set_errors[0]
