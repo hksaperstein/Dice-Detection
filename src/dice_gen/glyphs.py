@@ -37,15 +37,19 @@ ENGRAVE_DEPTH_FRACTION = 0.003
 # (2 * this - depth) above the face and only ENGRAVE_DEPTH_FRACTION
 # below it.
 ENGRAVE_CUTTER_HALF_THICKNESS_FRACTION = 0.01
-# 3 corner numerals share a d4 face -- scale each down from the single-
-# centered-numeral size so all three fit without crowding the center,
-# each other, or the face edges (0.6 clipped roman labels like "IV"
-# against the edge; 0.42 at inset 0.45 left them small and hugging the
-# corners with a large empty center -- both seen in real renders, both
-# user-reported). 0.5 with inset 0.40 matches how real vertex-read d4s
-# sit their numerals: clearly nearer the vertex than the center, but
-# with visible margin to both.
-D4_CORNER_FONT_SCALE = 0.5
+# 3 corner numerals share a d4 face. A d4's faces are proportionally
+# huge (inradius ~0.41 of die size, vs ~0.13 for a d20), so the corner
+# copies can be confident: at 0.5 the numerals spanned only ~9% of the
+# edge length where real vertex-read d4s run ~20-25%, reading as small
+# with a dead center (user feedback, twice). 0.8 at inset 0.42 fills
+# each corner region while keeping clear margins -- the median from
+# centroid to vertex is 2*inradius long, leaving ~0.9r of clearance to
+# the vertex even for the widest rotated 2-character labels.
+D4_CORNER_FONT_SCALE = 0.8
+# How far along its median (face centroid -> vertex) each d4 corner copy
+# sits; shared by the engraved and decal paths and by the corner
+# clearance clamps, which depend on it geometrically.
+D4_CORNER_INSET = 0.42
 # 0.9 (raised from 0.5): at 0.5 an engraved single-character numeral's em
 # size was half the face inradius (cap height ~0.35r) -- visually ~2x
 # smaller relative to its face than the same label on the decal path,
@@ -661,7 +665,7 @@ def _boolean_diff_apply(die_obj, cutter_obj):
     return warning
 
 
-def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.40):
+def _face_vertex_orientations(mesh, face, obj_matrix, inset=D4_CORNER_INSET):
     """
     Returns one (vertex_index, orientation matrix) pair per vertex of
     `face`, for d4's vertex-read numeral convention: real vertex-read d4
@@ -679,10 +683,11 @@ def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.40):
     center toward that vertex, projected into the face plane -- i.e.
     each copy points radially outward toward its own corner, matching
     the 120-degree-apart rotational pattern real vertex-read d4s show.
-    `inset` places each copy 40% of the way from the face center to the
-    vertex (0.55 clipped rotated 2-character labels against the face
-    edge; 0.45 still read as corner-hugging with an empty center -- both
-    seen in real renders).
+    `inset` places each copy 42% of the way from the face center to the
+    vertex, tuned together with D4_CORNER_FONT_SCALE against real
+    renders (0.55 clipped rotated 2-character labels against the face
+    edge; smaller insets with small fonts read as corner-hugging around
+    a dead center).
     """
     center = obj_matrix @ face.center
     normal = (obj_matrix.to_3x3() @ face.normal).normalized()
@@ -744,10 +749,26 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
             ):
                 v_value = vertex_values[vertex_index]
                 v_label = glyph_label(v_value, glyph_style, die_type)
+                width_per_em = _label_width_per_em(v_label, font_id, glyph_style)
                 v_size = _proportional_font_size(
-                    inradius, v_label,
-                    width_per_em=_label_width_per_em(v_label, font_id, glyph_style),
+                    inradius, v_label, width_per_em=width_per_em,
                 ) * D4_CORNER_FONT_SCALE
+                # Corner clearance clamp: a corner copy sits inset of
+                # the way up its median, where clearance to the two
+                # adjacent edges is (1 - inset) * r -- and keeps
+                # shrinking toward the vertex at half the median rate,
+                # so the binding constraint is at the glyph's TOP
+                # corners (half a cap-height, ~0.35 em, farther up the
+                # median): width/2 <= r(1-t) - 0.175*size. Solved for
+                # size with a 0.9 safety margin. A center-only clearance
+                # model let wide rotated labels ("IV") poke their top
+                # corners across the face edge (seen in a real render).
+                if width_per_em > 0:
+                    clearance = inradius * (1.0 - D4_CORNER_INSET)
+                    v_size = min(
+                        v_size,
+                        0.9 * clearance / (width_per_em / 2.0 + 0.175),
+                    )
                 planned_cuts.append((v_value, orient, v_size))
             continue
         if glyph_style == "pips":
@@ -1436,7 +1457,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
         # medians (user-reported). Real per-face positions replace all
         # idealized layouts.
         ortho_scale = 1.4
-        inset = 0.40
+        inset = D4_CORNER_INSET
         if corner_labels is not None:
             placements = []
             cx0 = anchor_uv[0] if anchor_uv is not None else 0.5
@@ -1463,10 +1484,22 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
                                (half_width, -half_height)]
             ]
         for label, (ox, oy), angle in placements:
+            width_per_em = _label_width_per_em(label, font_id, glyph_style)
             font_size = _proportional_font_size(
-                inradius / size_mm, label,
-                width_per_em=_label_width_per_em(label, font_id, glyph_style),
+                inradius / size_mm, label, width_per_em=width_per_em,
             ) * DECAL_FONT_CANVAS_SCALE * D4_CORNER_FONT_SCALE
+            # Corner clearance clamp, mirroring the engraved path (see
+            # its comment for the geometry: the binding constraint is at
+            # the glyph's TOP corners, which sit closer to the
+            # converging adjacent edges than its center does). Canvas
+            # units via the face_span mapping.
+            if face_span and width_per_em > 0:
+                inradius_canvas = (inradius / face_span) * 1.12
+                clearance_canvas = inradius_canvas * (1.0 - inset)
+                font_size = min(
+                    font_size,
+                    0.9 * clearance_canvas / (width_per_em / 2.0 + 0.175),
+                )
             bpy.ops.object.text_add(location=(ox, oy, 0))
             txt_obj = bpy.context.active_object
             txt_obj.data.body = label

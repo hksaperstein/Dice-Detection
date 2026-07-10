@@ -1631,13 +1631,19 @@ def test_render_label_to_image_renders_three_corner_copies_for_d4():
         def region_has_ink(y0, y1, x0, x1):
             return bool((alpha[y0:y1, x0:x1] > 0.05).any())
 
-        assert not region_has_ink(119, 135, 96, 160), (
+        # Regions re-measured after the corner copies grew to
+        # D4_CORNER_FONT_SCALE=0.8 / inset=0.42 (bigger real-dice-like
+        # numerals shrink the empty central band): a fresh pixel scan of
+        # this exact render found ink spanning rows 62-119 (base copies)
+        # and 134-195 (apex copy), leaving rows 120-133 as the true
+        # fully-empty gap.
+        assert not region_has_ink(122, 132, 96, 160), (
             "expected NO ink in the measured gap between the apex and "
             "base copies -- a 3-corner layout should leave this band empty"
         )
-        assert region_has_ink(150, 200, 100, 160), "expected ink near the top corner"
-        assert region_has_ink(55, 95, 40, 100), "expected ink near the bottom-left corner"
-        assert region_has_ink(55, 95, 160, 220), "expected ink near the bottom-right corner"
+        assert region_has_ink(134, 196, 100, 155), "expected ink near the top corner"
+        assert region_has_ink(62, 120, 40, 128), "expected ink near the bottom-left corner"
+        assert region_has_ink(62, 120, 128, 220), "expected ink near the bottom-right corner"
 
 
 def test_unwrap_faces_to_full_square_gives_d4_faces_consistent_apex_up_orientation():
