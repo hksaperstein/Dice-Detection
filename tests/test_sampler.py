@@ -140,3 +140,40 @@ def test_sample_set_non_pct_dice_are_not_forced_to_arabic():
             if dt != "d10_pct" and v.glyph_style != "arabic_numerals":
                 seen_non_arabic = True
     assert seen_non_arabic
+
+
+def test_d10_only_samples_styles_whose_numeral_system_has_a_zero():
+    # Roman and (Milesian) Greek numerals have no zero; d10's values
+    # include 0, so those styles previously produced one mismatched
+    # arabic "0" face amid otherwise Roman/Greek lettering.
+    seen_d10 = False
+    for seed in range(300):
+        v = sampler.sample_variant(seed)
+        if v.die_type == "d10":
+            seen_d10 = True
+            assert v.glyph_style in ("arabic_numerals", "cjk_numerals")
+    assert seen_d10, "expected at least one d10 sample across 300 seeds"
+
+
+def test_sample_set_d10_falls_back_to_arabic_for_zeroless_styles():
+    seen_zeroless_shared = False
+    for seed in range(100):
+        variants = sampler.sample_set(seed)
+        shared = variants["d20"].glyph_style
+        if shared in ("roman_numerals", "greek_numerals"):
+            seen_zeroless_shared = True
+            assert variants["d10"].glyph_style == "arabic_numerals"
+        else:
+            assert variants["d10"].glyph_style == shared
+    assert seen_zeroless_shared, "expected at least one roman/greek set across 100 seeds"
+
+
+def test_glyph_fill_is_always_painted():
+    # Readable numerals are a hard requirement for training data: blank
+    # (unpainted) engravings at the current shallow depth are nearly
+    # invisible, so the blank option is no longer sampled.
+    for seed in range(200):
+        assert sampler.sample_variant(seed).glyph_fill == "painted"
+    for seed in range(50):
+        for v in sampler.sample_set(seed).values():
+            assert v.glyph_fill == "painted"

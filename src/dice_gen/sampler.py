@@ -50,11 +50,21 @@ def sample_variant(seed: int) -> DiceVariantParams:
         glyph_style = rng.choice(["arabic_numerals", "pips"])
     elif die_type == "d10_pct":
         glyph_style = "arabic_numerals"
+    elif die_type == "d10":
+        # d10's value range includes 0, and neither the Roman nor the
+        # (Milesian) Greek numeral system has a zero -- both previously
+        # fell back to a lone arabic "0" face amid otherwise Roman/Greek
+        # lettering, i.e. visibly mismatched. Only styles whose numeral
+        # system actually covers 0 are allowed here.
+        glyph_style = rng.choice(["arabic_numerals", "cjk_numerals"])
     else:
         glyph_style = rng.choice([s for s in GLYPH_STYLES if s != "pips"])
 
     glyph_method = rng.choice(GLYPH_METHODS)
-    glyph_fill = rng.choice(GLYPH_FILLS) if glyph_method == "engraved" else "painted"
+    # Engraved fill is always painted: an unpainted (blank) engraving at
+    # the current shallow ENGRAVE_DEPTH_FRACTION is nearly invisible, and
+    # readable numerals are a hard requirement for training data.
+    glyph_fill = "painted"
     font_or_style_id = rng.choice(FONT_IDS)
 
     material_category = rng.choice(MATERIAL_CATEGORIES)
@@ -84,7 +94,8 @@ def sample_set(seed: int) -> dict:
     material_category = rng.choice(MATERIAL_CATEGORIES)
     material_params = _sample_material_params(rng, material_category)
     glyph_method = rng.choice(GLYPH_METHODS)
-    glyph_fill = rng.choice(GLYPH_FILLS) if glyph_method == "engraved" else "painted"
+    # Always painted -- see sample_variant's identical rule.
+    glyph_fill = "painted"
     font_or_style_id = rng.choice(FONT_IDS)
     bevel_fraction = rng.uniform(0.02, 0.06)
     glyph_style = rng.choice([s for s in GLYPH_STYLES if s != "pips"])
@@ -94,7 +105,16 @@ def sample_set(seed: int) -> dict:
         lo, hi = SIZE_RANGES_MM[die_type]
         size_mm = rng.uniform(lo, hi)
         d4_placement = rng.choice(D4_PLACEMENT_STYLES) if die_type == "d4" else None
-        die_glyph_style = "arabic_numerals" if die_type == "d10_pct" else glyph_style
+        if die_type == "d10_pct":
+            die_glyph_style = "arabic_numerals"
+        elif die_type == "d10" and glyph_style in ("roman_numerals", "greek_numerals"):
+            # Roman and Greek numeral systems have no zero (see
+            # sample_variant) -- the d10 in a Roman/Greek-lettered set
+            # falls back to arabic, mirroring d10_pct's override, rather
+            # than showing one mismatched arabic "0" face.
+            die_glyph_style = "arabic_numerals"
+        else:
+            die_glyph_style = glyph_style
 
         variants[die_type] = DiceVariantParams(
             die_type=die_type,

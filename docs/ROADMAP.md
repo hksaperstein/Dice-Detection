@@ -2,9 +2,29 @@
 
 Living list of known issues and next-session priorities. Add to this rather than losing feedback between sessions. Newest entries at top of each section.
 
-## 2026-07-07 — user feedback batch (not yet investigated/fixed)
+## 2026-07-10 — glyph-quality overhaul (user-directed, done hands-on in-session)
 
-Direct user feedback, verbatim intent preserved. None of these are fixed yet — this is the entry point for next session.
+Direct user feedback fixed this session (evidence in the commit touching glyphs/materials/sampler/exporter/orchestrator):
+
+- **Decal glyphs off-center / hugging edges — FIXED.** Root cause: `_unwrap_faces_to_full_square` centers each UV island on its bbox midpoint, but the glyph rendered at canvas center — on triangles that's half an inradius off the centroid, toward the apex. Fix: unwrap now returns per-face glyph anchors (the face center's real UV position) and `_render_label_to_image` places glyphs there.
+- **Glyph "up" now snaps to a face vertex** (`_snap_up_to_face_vertex`, both engraved + decal paths; quads exempt — d6 reads edge-aligned). d8/d10's pole vertex is picked automatically, making the hemisphere convention exact.
+- **GREEK_NUMERALS rewritten to the real Milesian system** (was shifted by one from 6 up, had a fake Ω zero). 6 = ΣΤ digraph (stigma Ϛ missing from LiberationSansNarrow — measured, 8-vert placeholder). Item 5 of the 2026-07-07 batch: closed.
+- **d10 restricted to zero-covering numeral styles (arabic/CJK).** Roman AND Greek have no zero; both previously produced one mismatched arabic "0" face on roman/greek d10s. In matched sets a roman/greek shared style makes the d10 fall back to arabic (same mechanism as d10_pct).
+- **d4 is now truly vertex-read** (`numbering.d4_vertex_values`): values belong to vertices, each face shows its 3 corners' own values (3 different numbers per face), consistent across the 3 faces at each vertex, oriented outward, scaled by `D4_CORNER_FONT_SCALE`. Previously all 3 corners of a face showed the same (face) value — not how real d4s work.
+- **Label-width overflow fixed by measurement, not char count** (`_label_width_per_em` + `MAX_LABEL_WIDTH_INRADIUS_FRACTION`): full-width CJK labels ("十九") were ~3x wider per char than digits and crossed d20 face edges; now clamped against measured width (exact canvas-space conversion via the unwrap's returned face span).
+- **Engraving depth 0.02 → 0.003** ("fraction of a fraction of a fraction of a fingernail") with **recess-edge softening**: post-cut crease edges marked into a `recess_soften_weight` edge attribute (`_mark_recess_soften_edges`), rounded by a second Bevel modifier in the exporter targeting that attribute via `edge_weight`. **PERCENT offset is load-bearing**: absolute width — even tiny — collapsed the boolean output's sliver edges into thousands of degenerate faces (7,198 vs 73 at PERCENT-20 on a real d20). Item 6: closed. Cut-reliability at 0.003 verified on a 100-die batch: 1/54 engraved dice with a skipped cut (better than the 0.01 baseline's 2/54).
+- **Guaranteed glyph contrast, from RENDERED luminance not HSV params.** Decal ink and engraved fill both pick near-white/near-black by the base material's real swatch luminance (`material_rendered_luminance`); the HSV `value` param misstated a translucent die (0.55 nominal, rendered dark olive → invisible dark fill). Engraved `glyph_fill` is now always "painted" (blank no longer sampled). Item 3: the flat-fill contrast half is closed; patterned/2-tone fills remain open.
+- **Engraved glyph size raised to match decal proportions** (`FONT_INRADIUS_FRACTION` 0.5 → 0.9, `DECAL_FONT_CANVAS_SCALE` rebalanced to 20/9 so decal output is unchanged).
+
+Known caveats from this session:
+- `mesh_quality_warnings` flag-rate rose 25 → 43 of 100 (small residuals from the recess-soften pass, worst case 162 degenerate faces on a d4) — tracked in manifests, not silent; acceptable tradeoff for softened engravings but worth watching.
+- Engraved numerals are legible but subtler than decal ones (thin Liberation strokes + micro-depth); bolder fonts (item 4) would help.
+- `data/raw/dice_viewport_demo/` .blend/thumbnail files are contaminated with neighboring dice (interactive keep-in-viewport generation violates `_save_blend_copy`'s single-die assumption); its USD/STL files are fine. Headless batches are unaffected. Don't use that folder as training data.
+- Depth 0.003 leans harder on roadmap item 1 (no real "did the numeral engrave" check) — that gap is now more important, not less.
+
+## 2026-07-07 — user feedback batch (partially fixed 2026-07-10, see above)
+
+Direct user feedback, verbatim intent preserved. Items 3 (contrast half), 5, and 6 were fixed on 2026-07-10; items 1, 2, 4, 7 and the patterned-fill half of 3 remain open.
 
 1. **"Validation techniques are weak" — several assets are missing indices (numerals) entirely.**
    This is a real, distinct gap from what's currently tracked. `mesh_quality_warnings` (non-manifold/degenerate checks) and `engraving_warnings` (EXACT+FLOAT both collapsed/debris) do NOT catch the case where a boolean cut "succeeds" by those checks (no collapse, no debris) but removes a negligible/invisible amount of material — this exact failure mode is already an acknowledged, unresolved gap documented in `_boolean_diff_apply`'s own docstring (the "Δ"/"Ζ" near-zero-effect case from earlier this project), and a prior attempt to catch it via cutter-volume-ratio was found too noisy to ship (67% false-trigger rate). **Next step:** design a real "is a numeral actually present/visible" check — likely a geometric check (search for recessed vertices near each cut's planned position/depth from Phase 1, not just topology validity) rather than another volume-ratio heuristic. Consider a fresh-reload render+pixel check per engraved face (mirroring the decal path's existing pixel-verification technique) as an alternative or supplement.

@@ -81,10 +81,34 @@ def apply_material(die_obj, mat, slot_index=0):
     materials[slot_index] = mat
 
 
-def build_fill_material(die_name, params):
-    """Plain-color material for painted glyph fill (material slot 1)."""
+def build_fill_material(die_name, params, base_luminance=None):
+    """
+    Plain-color material for painted glyph fill (material slot 1).
+
+    Contrast comes from LIGHTNESS opposition, not hue opposition: the
+    previous complementary-hue fill at fixed s=0.8/v=0.9 could land at
+    nearly the same luminance as the base (e.g. a bright die with a
+    bright complementary fill), leaving engraved numerals hard to read.
+    Real dice paint numerals in near-white or near-black ink; mirror
+    that -- a dark base gets a light fill, a light base gets a dark
+    fill, with the complementary hue kept only as a subtle tint.
+
+    base_luminance: the base material's REAL rendered luminance (see
+    glyphs.material_rendered_luminance). Prefer it whenever available:
+    params["value"] is only a node-graph input and can badly misstate
+    the rendered appearance (a translucent value=0.55 die rendered dark
+    olive, making the param-chosen dark fill invisible). The param is
+    kept only as a fallback for callers without a rendered swatch.
+    """
     fill_hue = (params["hue"] + 0.5) % 1.0
-    fill_color = _hsv_to_rgba(fill_hue, 0.8, 0.9)
+    base_is_light = (
+        base_luminance >= 0.5 if base_luminance is not None
+        else params["value"] >= 0.5
+    )
+    if base_is_light:
+        fill_color = _hsv_to_rgba(fill_hue, 0.25, 0.05)
+    else:
+        fill_color = _hsv_to_rgba(fill_hue, 0.12, 0.95)
     mat = bpy.data.materials.new(name=f"{die_name}_fill")
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes["Principled BSDF"]

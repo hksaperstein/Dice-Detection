@@ -13,9 +13,36 @@ import numpy as np
 from mathutils import Vector, Matrix
 
 from .geometry import compute_face_poles, compute_face_inradius
+from .numbering import d4_vertex_values
 
-ENGRAVE_DEPTH_FRACTION = 0.02
-FONT_INRADIUS_FRACTION = 0.5
+# "A fraction of a fraction of a fraction of a fingernail deep" (direct
+# user spec): 0.003 of die size = 0.04-0.07mm across the sampled size
+# range, vs a ~0.4mm fingernail. Visibility comes from the always-painted
+# contrasting fill, not depth. History: 0.04 -> 0.03 -> 0.02 -> 0.01 ->
+# 0.003, each step a direct user request for shallower.
+ENGRAVE_DEPTH_FRACTION = 0.003
+# 3 corner numerals share a d4 face -- scale each down from the single-
+# centered-numeral size so all three fit without crowding the center or
+# each other.
+D4_CORNER_FONT_SCALE = 0.6
+# Edge float attribute marking every crease edge the engraving cuts
+# introduced (recess rims + wall/floor junctions). exporter.export_asset
+# runs a second, tiny WEIGHT-limited bevel targeting THIS attribute (the
+# Bevel modifier's edge_weight property selects it by name), fully
+# independent of the structural bevel_weight_edge marks -- softening the
+# engraving's edges without touching the die's own silhouette. This is
+# the die-side post-cut approach; beveling the CUTTER pre-cut was tried
+# and reverted (it inverted the boolean -- added material instead of
+# subtracting -- for every digit with an enclosed hole: 6, 8, 0).
+RECESS_SOFTEN_ATTR = "recess_soften_weight"
+# 0.9 (raised from 0.5): at 0.5 an engraved single-character numeral's em
+# size was half the face inradius (cap height ~0.35r) -- visually ~2x
+# smaller relative to its face than the same label on the decal path,
+# whose canvas calibration lands closer to real dice (numerals filling
+# most of the inscribed circle). DECAL_FONT_CANVAS_SCALE below is
+# rebalanced in lockstep so the decal path's output is bit-identical to
+# before this change; only engraved glyphs grow.
+FONT_INRADIUS_FRACTION = 0.9
 FONT_EXTRA_CHAR_SHRINK = 0.35
 
 # _render_label_to_image renders into a fixed, dimensionless orthographic
@@ -29,14 +56,17 @@ FONT_EXTRA_CHAR_SHRINK = 0.35
 # constant rescales that ratio into this function's local text-size units.
 # Calibrated so a single-character label on a d6 face (inradius/size_mm ==
 # 0.5, the largest ratio of any die type) reproduces this path's old fixed
-# default of 1.0 exactly (0.5 * FONT_INRADIUS_FRACTION * 4.0 == 1.0),
+# default of 1.0 exactly (0.5 * FONT_INRADIUS_FRACTION * SCALE == 1.0),
 # anchoring the new proportional sizing to the one old value most likely to
 # have already been visually reasonable, while every smaller-faced die type
 # and every longer label now correctly renders smaller than that anchor
 # instead of at the same fixed size. Verified by rendering
 # test_render_label_to_image_renders_three_corner_copies_for_d4 with real
 # d4 geometry and inspecting the resulting ink regions (see that test).
-DECAL_FONT_CANVAS_SCALE = 4.0
+# Rebalanced 4.0 -> 20/9 when FONT_INRADIUS_FRACTION rose 0.5 -> 0.9 (an
+# engraved-path-only size correction), keeping this path's effective size
+# exactly where it was: 0.5 * 0.9 * (20/9) == 1.0, same anchor as before.
+DECAL_FONT_CANVAS_SCALE = 20.0 / 9.0
 
 FONT_FILES = {
     "font_sans_bold": "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -87,12 +117,24 @@ ROMAN_NUMERALS = {
     16: "XVI", 17: "XVII", 18: "XVIII", 19: "XIX", 20: "XX",
 }
 
+# Real Milesian (Ionic) Greek numerals -- the actual historical system, not
+# an invented approximation (the previous dict here was shifted by one from
+# 6 upward because it skipped digamma/stigma, and used Omega for a zero the
+# Greek system never had). 6 is properly the archaic letter stigma (a
+# ligature of sigma-tau); the ΣΤ digraph used below is the standard modern
+# typographic substitute, chosen over the literal stigma codepoint (U+03DA)
+# because LiberationSansNarrow-Bold has no stigma glyph (renders a
+# placeholder rectangle -- verified empirically in this project's Blender,
+# 8-vert placeholder vs a real 172-vert outline in LiberationSans-Bold) and
+# fonts are sampled independently of glyph style. There is NO zero: the
+# system predates it, which is why d10 (values 0-9) must never sample
+# greek_numerals (enforced in sampler.py, same mechanism as d10_pct's
+# arabic-only restriction).
 GREEK_NUMERALS = {
-    0: "Ω", 1: "Α", 2: "Β", 3: "Γ", 4: "Δ", 5: "Ε",
-    6: "Ζ", 7: "Η", 8: "Θ", 9: "Ι", 10: "ΙΑ",
-    11: "ΙΒ", 12: "ΙΓ", 13: "ΙΔ", 14: "ΙΕ",
-    15: "ΙΣ", 16: "ΙΖ", 17: "ΙΗ", 18: "ΙΘ",
-    19: "Κ", 20: "ΚΑ",
+    1: "Α", 2: "Β", 3: "Γ", 4: "Δ", 5: "Ε",
+    6: "ΣΤ", 7: "Ζ", 8: "Η", 9: "Θ", 10: "Ι",
+    11: "ΙΑ", 12: "ΙΒ", 13: "ΙΓ", 14: "ΙΔ", 15: "ΙΕ",
+    16: "ΙΣΤ", 17: "ΙΖ", 18: "ΙΗ", 19: "ΙΘ", 20: "Κ",
 }
 
 CJK_NUMERALS = {
@@ -118,18 +160,67 @@ def glyph_label(value, glyph_style, die_type=None):
     raise ValueError(f"glyph_label not applicable to style {glyph_style!r}")
 
 
-def _proportional_font_size(inradius, label):
+# Hard cap on a label's total rendered width as a multiple of its face's
+# inradius. The per-character shrink in _proportional_font_size assumes
+# roughly digit-width characters; full-width CJK labels ("十九") are ~3x
+# wider per character, and at the shrink formula's size their strokes
+# reached and crossed face edges on d20s (confirmed visually on a real
+# batch). 1.4 keeps even wide labels inside the face's visual center
+# region on the tightest face shape (triangle) while leaving ordinary
+# numerals untouched -- the cap only binds when measured width demands it.
+MAX_LABEL_WIDTH_INRADIUS_FRACTION = 1.4
+
+_LABEL_WIDTH_CACHE = {}
+
+
+def _label_width_per_em(label, font_id, glyph_style):
     """
-    Calibrated this session (FONT_INRADIUS_FRACTION=0.5,
-    FONT_EXTRA_CHAR_SHRINK=0.35) against the real worst cases across
-    every die type/glyph style combination -- see
+    Measures the label's real rendered width, in em units (width at
+    txt.data.size == 1.0), for the actual font that will draw it --
+    including the CJK default-font exception in _load_font. Cached per
+    (label, font, style): a batch re-renders the same labels constantly.
+    """
+    key = (label, font_id, glyph_style)
+    if key in _LABEL_WIDTH_CACHE:
+        return _LABEL_WIDTH_CACHE[key]
+
+    bpy.ops.object.text_add()
+    txt_obj = bpy.context.active_object
+    txt_obj.data.body = label
+    font = _load_font(font_id, glyph_style)
+    if font is not None:
+        txt_obj.data.font = font
+    txt_obj.data.size = 1.0
+    bpy.context.view_layer.update()
+    width = float(txt_obj.dimensions.x)
+    txt_data = txt_obj.data
+    bpy.data.objects.remove(txt_obj, do_unlink=True)
+    bpy.data.curves.remove(txt_data)
+
+    _LABEL_WIDTH_CACHE[key] = width
+    return width
+
+
+def _proportional_font_size(inradius, label, width_per_em=None):
+    """
+    Calibrated against the real worst cases across every die type/glyph
+    style combination -- see
     test_proportional_font_size_shrinks_for_longer_labels. Longer labels
     (e.g. d20's 2-digit arabic numerals, or "XVIII" for roman numeral 18)
     need a smaller per-character size to occupy roughly the same total
     footprint as a single-character label at the same font size would.
+
+    width_per_em (from _label_width_per_em) additionally clamps the size
+    so the label's real measured width never exceeds
+    MAX_LABEL_WIDTH_INRADIUS_FRACTION of the face inradius -- the
+    character-count shrink alone underestimates full-width CJK labels
+    badly enough for strokes to cross face edges.
     """
     n = len(label)
-    return inradius * FONT_INRADIUS_FRACTION / (1 + (n - 1) * FONT_EXTRA_CHAR_SHRINK)
+    size = inradius * FONT_INRADIUS_FRACTION / (1 + (n - 1) * FONT_EXTRA_CHAR_SHRINK)
+    if width_per_em is not None and width_per_em > 0:
+        size = min(size, MAX_LABEL_WIDTH_INRADIUS_FRACTION * inradius / width_per_em)
+    return size
 
 
 def _tangent_bitangent(normal, up_reference=None, threshold=0.999):
@@ -178,13 +269,54 @@ def _tangent_bitangent(normal, up_reference=None, threshold=0.999):
     return tangent, bitangent
 
 
+def _snap_up_to_face_vertex(up_reference, normal, vertex_dirs, num_verts):
+    """
+    Real dice align each numeral's "up" with one of its face's own
+    vertices (a d20/d8 triangle's numeral points at the apex, a d10
+    kite's at its pole corner, a d12 pentagon's at a corner) -- EXCEPT
+    quad faces (d6), whose numerals read edge-aligned; snapping a d6
+    numeral to a corner would rotate it 45 degrees off every real die.
+
+    Takes the smoothly-varying projected up hint (global-Z projection or
+    pole direction) and snaps it to whichever in-plane center-to-vertex
+    direction it is most aligned with, making the convention exact
+    instead of approximate. For d8/d10 the pole IS a vertex of every
+    face, so this is a no-op-to-exactifying change there; for d4/d12/d20
+    it turns "roughly toward global up" into "exactly at a vertex," the
+    real-world convention.
+
+    vertex_dirs: normalized in-plane (already normal-projected) unit
+    vectors from the face center to each of its vertices, in the same
+    space (world or local) as up_reference/normal.
+    """
+    if num_verts == 4 or up_reference is None:
+        return up_reference
+    return max(vertex_dirs, key=lambda d: d.dot(up_reference))
+
+
 def _face_orientation_matrix(face, obj_matrix, pole_world_co=None):
     center = obj_matrix @ face.center
     normal = (obj_matrix.to_3x3() @ face.normal).normalized()
-    up_reference = None
     if pole_world_co is not None:
         to_pole = pole_world_co - center
         up_reference = (to_pole - to_pole.dot(normal) * normal).normalized()
+    else:
+        # Reproduce _tangent_bitangent's default up hint (global Z, or Y
+        # for genuinely-vertical faces) explicitly, so it too can be
+        # vertex-snapped below instead of only pole-based references.
+        up_hint = Vector((0, 0, 1)) if abs(normal.z) < 0.999 else Vector((0, 1, 0))
+        up_reference = (up_hint - up_hint.dot(normal) * normal).normalized()
+
+    mesh = face.id_data
+    vertex_dirs = []
+    for vi in face.vertices:
+        d = (obj_matrix @ mesh.vertices[vi].co) - center
+        d = (d - d.dot(normal) * normal).normalized()
+        vertex_dirs.append(d)
+    up_reference = _snap_up_to_face_vertex(
+        up_reference, normal, vertex_dirs, len(face.vertices)
+    )
+
     tangent, bitangent = _tangent_bitangent(normal, up_reference=up_reference)
     rot = Matrix((tangent, bitangent, normal)).transposed().to_4x4()
     rot.translation = center
@@ -520,14 +652,17 @@ def _boolean_diff_apply(die_obj, cutter_obj):
 
 def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.55):
     """
-    Returns one orientation matrix per vertex of `face`, for d4's
-    vertex-read numeral convention: real commercial d4 dice (standard
-    tetrahedra -- confirmed this is the shape geometry.py builds) show
-    the same digit three times per face, once near each corner, oriented
-    so whichever corner points up when the die rests on the opposite
-    face reads correctly -- unlike every other die type, which uses a
-    single centered numeral via _face_orientation_matrix's global
-    up-hint convention.
+    Returns one (vertex_index, orientation matrix) pair per vertex of
+    `face`, for d4's vertex-read numeral convention: real vertex-read d4
+    dice key values to VERTICES, not faces -- each face shows the values
+    of its own 3 corners (3 DIFFERENT numbers per face), and all 3 faces
+    meeting at a vertex show that vertex's value at their shared corner,
+    so the rolled result reads at the apex. (An earlier version of this
+    pipeline engraved the face's single assigned value at all 3 corners,
+    which is not how real vertex-read d4s work -- corrected per direct
+    user feedback.) The vertex_index in each returned pair is what lets
+    the caller look up the right value per corner via
+    numbering.d4_vertex_values.
 
     For each vertex, "up" (bitangent) is the direction from the face
     center toward that vertex, projected into the face plane -- i.e.
@@ -549,7 +684,7 @@ def _face_vertex_orientations(mesh, face, obj_matrix, inset=0.55):
         bitangent = normal.cross(tangent).normalized()
         rot = Matrix((tangent, bitangent, normal)).transposed().to_4x4()
         rot.translation = center + (vertex_world - center) * inset
-        orientations.append(rot)
+        orientations.append((vertex_index, rot))
     return orientations
 
 
@@ -564,12 +699,14 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
     # topology (reindexing/reordering polygons), so face_index values from
     # `assignment` (captured once upfront by geometry.compute_opposite_face_pairs)
     # must never be re-resolved against die_obj.data.polygons after a cut.
-    # Real commercial d4 dice show the same numeral 3 times per face (once
-    # per corner, vertex-read) rather than the single centered numeral every
-    # other die type uses -- see _face_vertex_orientations. This branch must
-    # stay inside Phase 1 (computed entirely against the pristine mesh):
-    # recomputing face.vertices/face.normal mid-loop, after an earlier cut
-    # has already rebuilt the mesh topology, causes a Blender crash.
+    # Real vertex-read d4 dice show 3 DIFFERENT numerals per face -- one
+    # per corner, each corner showing its own VERTEX's value (see
+    # numbering.d4_vertex_values / _face_vertex_orientations) -- rather
+    # than the single centered numeral every other die type uses. This
+    # branch must stay inside Phase 1 (computed entirely against the
+    # pristine mesh): recomputing face.vertices/face.normal mid-loop,
+    # after an earlier cut has already rebuilt the mesh topology, causes
+    # a Blender crash.
     #
     # font_size is also computed here, per cut, rather than once for the
     # whole die: it depends on this face's own inradius (which varies
@@ -582,22 +719,37 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
     # and recomputing in Phase 2) avoids re-indexing die_obj.data.polygons
     # after a cut has already rebuilt the mesh topology.
     face_poles = compute_face_poles(die_obj, die_type)
+    vertex_values = d4_vertex_values(len(die_obj.data.vertices)) if is_d4_vertex_numerals else None
     planned_cuts = []
     for face_index, value in assignment.items():
         face = die_obj.data.polygons[face_index]
+        if is_d4_vertex_numerals:
+            # Values come from each corner's VERTEX, not from the face's
+            # own assigned value; sized down so 3 numerals fit one face.
+            inradius = compute_face_inradius(die_obj.data, face, die_obj.matrix_world)
+            for vertex_index, orient in _face_vertex_orientations(
+                die_obj.data, face, die_obj.matrix_world
+            ):
+                v_value = vertex_values[vertex_index]
+                v_label = glyph_label(v_value, glyph_style, die_type)
+                v_size = _proportional_font_size(
+                    inradius, v_label,
+                    width_per_em=_label_width_per_em(v_label, font_id, glyph_style),
+                ) * D4_CORNER_FONT_SCALE
+                planned_cuts.append((v_value, orient, v_size))
+            continue
         if glyph_style == "pips":
             font_size = None
         else:
             inradius = compute_face_inradius(die_obj.data, face, die_obj.matrix_world)
             label = glyph_label(value, glyph_style, die_type)
-            font_size = _proportional_font_size(inradius, label)
-        if is_d4_vertex_numerals:
-            for orient in _face_vertex_orientations(die_obj.data, face, die_obj.matrix_world):
-                planned_cuts.append((value, orient, font_size))
-        else:
-            pole_co = face_poles[face_index] if face_poles is not None else None
-            orient = _face_orientation_matrix(face, die_obj.matrix_world, pole_world_co=pole_co)
-            planned_cuts.append((value, orient, font_size))
+            font_size = _proportional_font_size(
+                inradius, label,
+                width_per_em=_label_width_per_em(label, font_id, glyph_style),
+            )
+        pole_co = face_poles[face_index] if face_poles is not None else None
+        orient = _face_orientation_matrix(face, die_obj.matrix_world, pole_world_co=pole_co)
+        planned_cuts.append((value, orient, font_size))
 
     # Phase 2: build and apply each cutter using only the precomputed
     # orientation matrices and font sizes — no further indexing into
@@ -644,7 +796,52 @@ def apply_engraved_glyphs(die_obj, die_type, assignment, glyph_style, glyph_fill
     if glyph_fill == "painted":
         _assign_fill_material_to_recessed_faces(die_obj)
 
+    _mark_recess_soften_edges(die_obj)
+
     return warnings
+
+
+def _mark_recess_soften_edges(die_obj, min_crease_deg=10.0):
+    """
+    Marks every crease edge the engraving cuts introduced into the
+    RECESS_SOFTEN_ATTR edge attribute, for exporter.export_asset's tiny
+    edge-softening bevel. Cut-created edges are exactly the edges WITHOUT
+    the full structural bevel_weight_edge mark build_die_base_mesh stamps
+    on the pristine polyhedron pre-cut (boolean cuts never rebuild those
+    untouched edges -- the same invariant the structural bevel already
+    relies on). Near-flat edges (below min_crease_deg dihedral) are left
+    unmarked: beveling a coplanar edge adds geometry without changing
+    appearance, and the boolean output is full of them (face
+    triangulation around each glyph outline).
+    """
+    mesh = die_obj.data
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    structural = bm.edges.layers.float.get('bevel_weight_edge')
+    soften = bm.edges.layers.float.get(RECESS_SOFTEN_ATTR)
+    if soften is None:
+        soften = bm.edges.layers.float.new(RECESS_SOFTEN_ATTR)
+
+    marked = 0
+    bm.normal_update()
+    for e in bm.edges:
+        if structural is not None and e[structural] > 0.5:
+            continue
+        if len(e.link_faces) != 2:
+            continue
+        try:
+            angle = e.calc_face_angle()
+        except ValueError:
+            continue
+        if angle < math.radians(min_crease_deg):
+            continue
+        e[soften] = 1.0
+        marked += 1
+
+    bm.to_mesh(mesh)
+    mesh.update()
+    bm.free()
+    return marked
 
 
 def _assign_fill_material_to_recessed_faces(die_obj):
@@ -881,15 +1078,32 @@ def _unwrap_faces_to_full_square(die_obj, die_type, margin=0.1):
     face_poles = compute_face_poles(die_obj, die_type)
     matrix_world_inv = die_obj.matrix_world.inverted()
 
+    glyph_anchors = {}
     for poly in mesh.polygons:
         normal = poly.normal
         center = poly.center
 
-        up_reference = None
         if face_poles is not None:
             pole_local = matrix_world_inv @ face_poles[poly.index]
             to_pole = pole_local - center
             up_reference = (to_pole - to_pole.dot(normal) * normal).normalized()
+        else:
+            # Same explicit default-up-hint + vertex-snap treatment as
+            # _face_orientation_matrix, so engraved and decal numerals on
+            # the same die type share one exact orientation convention.
+            up_hint = Vector((0, 0, 1)) if abs(normal.z) < 0.999 else Vector((0, 1, 0))
+            up_reference = (up_hint - up_hint.dot(normal) * normal).normalized()
+
+        vertex_dirs = []
+        for loop_index in poly.loop_indices:
+            vertex_index = mesh.loops[loop_index].vertex_index
+            d = mesh.vertices[vertex_index].co - center
+            d = (d - d.dot(normal) * normal).normalized()
+            vertex_dirs.append(d)
+        up_reference = _snap_up_to_face_vertex(
+            up_reference, normal, vertex_dirs, len(poly.loop_indices)
+        )
+
         tangent, bitangent = _tangent_bitangent(normal, up_reference=up_reference)
 
         local_coords = []
@@ -940,6 +1154,29 @@ def _unwrap_faces_to_full_square(die_obj, die_type, margin=0.1):
         for loop_index, (u, v) in zip(poly.loop_indices, local_coords):
             uv_layer[loop_index].uv = (0.5 + (u - u_mid) * scale, 0.5 + (v - v_mid) * scale)
 
+        # Where the face CENTER (poly.center -- the same anchor the
+        # engraved path cuts at) lands in this face's UV square. The
+        # island is bbox-centered (see u_mid/v_mid above), so for
+        # non-centrally-symmetric faces the center is NOT at (0.5, 0.5):
+        # an apex-up triangle's center sits half an inradius below its
+        # bbox midpoint, which is exactly how far off-center (toward the
+        # apex, where there's the LEAST room) a glyph rendered at canvas
+        # center used to land on every d4/d8/d20 decal face. The
+        # 180-degree apex flip above negates both axes, so the center's
+        # projection is (-0, -0) == (0, 0) relative coords either way and
+        # this expression is correct whether or not the face was flipped.
+        # "span" is the face's larger in-plane bbox extent in mesh units
+        # (mm) -- the length that gets scaled to fill 1.0 - 2*margin of
+        # UV space -- letting canvas-space consumers convert real mm
+        # lengths (e.g. the face inradius, for label-width clamping in
+        # _render_label_to_image) into canvas units exactly.
+        glyph_anchors[poly.index] = {
+            "anchor": (0.5 - u_mid * scale, 0.5 - v_mid * scale),
+            "span": span,
+        }
+
+    return glyph_anchors
+
 
 def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size_mm, asset_id, tmp_dir):
     """
@@ -958,7 +1195,7 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
     Blender auto-uniquifies datablock names within a session and this is not
     a filename-collision concern.
     """
-    _unwrap_faces_to_full_square(die_obj, die_type)
+    glyph_anchors = _unwrap_faces_to_full_square(die_obj, die_type)
 
     base_mat = die_obj.data.materials[0] if len(die_obj.data.materials) > 0 else None
 
@@ -967,8 +1204,18 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
     # The base material is identical across every face of a die, so its
     # appearance only needs to be rendered once, not per-face.
     swatch_path = None
+    ink_rgba = (0.02, 0.02, 0.02, 1.0)
     if base_mat is not None:
         swatch_path = _render_material_swatch(base_mat, resolution, tmp_dir, asset_id)
+        # Pick the ink color from the swatch's real rendered luminance, not
+        # from the material's HSV params: marbled/speckled/glitter/metallic
+        # appearance comes from the whole node graph, and the swatch is the
+        # one place that appearance already exists as pixels. Dark die ->
+        # near-white ink, light die -> near-black ink. (Previously the
+        # glyph objects had NO material at all and rendered default-shader
+        # gray -- invisible on dark dice, washed out on light ones.)
+        luminance = _swatch_luminance(swatch_path)
+        ink_rgba = (0.02, 0.02, 0.02, 1.0) if luminance > 0.5 else (0.95, 0.95, 0.95, 1.0)
 
     for face_index, value in assignment.items():
         image_path = os.path.join(tmp_dir, f"{asset_id}_face{face_index}.png")
@@ -978,9 +1225,13 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
         # die_obj.data.polygons directly inside this per-face loop is safe.
         face = die_obj.data.polygons[face_index]
         inradius = compute_face_inradius(die_obj.data, face, die_obj.matrix_world)
+        face_info = glyph_anchors.get(face_index, {})
         _render_label_to_image(
             value, glyph_style, font_id, die_type, image_path,
             resolution=resolution, inradius=inradius, size_mm=size_mm,
+            anchor_uv=face_info.get("anchor"), face_span=face_info.get("span"),
+            ink_rgba=ink_rgba,
+            corner_labels=_d4_corner_labels(die_obj, die_type, face_index, glyph_style),
         )
 
         if base_mat is not None:
@@ -1015,8 +1266,84 @@ def apply_decal_glyphs(die_obj, die_type, assignment, glyph_style, font_id, size
         die_obj.data.polygons[face_index].material_index = len(die_obj.data.materials) - 1
 
 
+def _swatch_luminance(swatch_path):
+    """Mean Rec.709 luminance of a rendered material swatch PNG."""
+    swatch_img = bpy.data.images.load(swatch_path)
+    px = np.array(swatch_img.pixels[:]).reshape(-1, 4)
+    luminance = float((0.2126 * px[:, 0] + 0.7152 * px[:, 1] + 0.0722 * px[:, 2]).mean())
+    bpy.data.images.remove(swatch_img)
+    return luminance
+
+
+def material_rendered_luminance(material, tmp_dir, asset_id, resolution=64):
+    """
+    Renders a small swatch of `material` and returns its mean luminance.
+    This is the trustworthy signal for light-vs-dark ink/fill decisions:
+    a material's HSV `value` param is only an input to its node graph,
+    and can badly misstate what the material actually looks like
+    (confirmed on a real translucent die: value=0.55 -- nominally light
+    -- rendered dark olive, so its param-chosen dark engraving fill was
+    invisible). Rendering is what the training data consumer sees, so
+    luminance is measured at that level.
+    """
+    swatch_path = _render_material_swatch(
+        material, resolution, tmp_dir, f"{asset_id}_lum"
+    )
+    return _swatch_luminance(swatch_path)
+
+
+def _d4_corner_labels(die_obj, die_type, face_index, glyph_style):
+    """
+    For a d4 face, maps the decal canvas's three fixed corner positions
+    (apex, bottom-left, bottom-right -- see _render_label_to_image's d4
+    branch) to the labels of the REAL mesh vertices that landed at those
+    UV corners, using the UV layout _unwrap_faces_to_full_square already
+    wrote. This is what makes the vertex-read convention hold on the
+    decal path: every face shows its 3 corners' own vertex values, and
+    the 3 faces meeting at any vertex agree on the value shown there.
+
+    Returns [apex_label, bottom_left_label, bottom_right_label], or None
+    for anything that isn't a d4 numeral face (including pips).
+    """
+    if die_type != "d4" or glyph_style == "pips":
+        return None
+    mesh = die_obj.data
+    uv_layer = mesh.uv_layers.active.data
+    poly = mesh.polygons[face_index]
+    vertex_values = d4_vertex_values(len(mesh.vertices))
+
+    entries = []
+    for loop_index in poly.loop_indices:
+        u, v = uv_layer[loop_index].uv
+        entries.append((u, v, mesh.loops[loop_index].vertex_index))
+    apex = max(entries, key=lambda e: e[1])
+    base = sorted((e for e in entries if e is not apex), key=lambda e: e[0])
+    ordered = [apex, base[0], base[1]]
+    return [
+        glyph_label(vertex_values[e[2]], glyph_style, die_type) for e in ordered
+    ]
+
+
+def _ink_material(rgba):
+    """
+    Flat unlit (emission) material for decal glyph objects, so the ink
+    renders as exactly `rgba` regardless of the canvas scene's lighting.
+    """
+    mat = bpy.data.materials.new("dice_gen_ink_tmp")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    for node in list(nt.nodes):
+        nt.nodes.remove(node)
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    emission = nt.nodes.new("ShaderNodeEmission")
+    emission.inputs["Color"].default_value = rgba
+    nt.links.new(emission.outputs["Emission"], out.inputs["Surface"])
+    return mat
+
+
 def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, resolution=256,
-                            inradius=None, size_mm=None):
+                            inradius=None, size_mm=None, anchor_uv=None, face_span=None,
+                            ink_rgba=None, corner_labels=None):
     """
     `inradius` (this face's world-space inradius, mm -- see
     geometry.compute_face_inradius) and `size_mm` (the die's overall
@@ -1053,64 +1380,68 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
     light_obj.location = (0, 0, 3)
     scene.collection.objects.link(light_obj)
 
+    # Canvas-space offset of the face's real center (where the engraved
+    # path puts its glyphs) from the canvas midpoint -- see
+    # _unwrap_faces_to_full_square's returned glyph_anchors. The island is
+    # bbox-centered in UV, so on non-centrally-symmetric faces (triangles,
+    # kites, pentagons) rendering at (0,0) would land the glyph up to half
+    # an inradius away from the face's visual center. ortho_scale=1.4 maps
+    # canvas x in [-0.7, 0.7] to u in [0, 1], hence the 1.4 factor.
+    anchor_x, anchor_y = 0.0, 0.0
+    if anchor_uv is not None:
+        anchor_x = (anchor_uv[0] - 0.5) * 1.4
+        anchor_y = (anchor_uv[1] - 0.5) * 1.4
+
+    ink_mat = _ink_material(ink_rgba if ink_rgba is not None else (0.02, 0.02, 0.02, 1.0))
+
     glyph_objs = []
     if glyph_style == "pips":
         for (ox, oy) in PIP_VALUE_LAYOUTS.get(value, [(0, 0)]):
             bpy.ops.mesh.primitive_circle_add(
-                radius=0.12, fill_type='NGON', location=(ox, oy, 0)
+                radius=0.12, fill_type='NGON',
+                location=(ox + anchor_x, oy + anchor_y, 0)
             )
             dot = bpy.context.active_object
+            dot.data.materials.append(ink_mat)
             bpy.context.collection.objects.unlink(dot)
             scene.collection.objects.link(dot)
             glyph_objs.append(dot)
     elif die_type == "d4":
-        # Real commercial d4 dice (standard tetrahedra) show the same
-        # digit at all three corners of each face, oriented so whichever
-        # corner is "up" reads correctly -- see the vertex-read design
-        # doc. Every d4 face is a congruent equilateral triangle, so a
-        # fixed canonical 3-corner layout (not tied to this face's real
-        # 3D vertex positions) is sufficient: all three copies show the
-        # identical value, so exact per-vertex correspondence doesn't
-        # matter, only that each corner gets one correctly-outward-
-        # rotated copy.
+        # Real vertex-read d4 dice key values to VERTICES: each face
+        # shows its 3 corners' own vertex values (3 DIFFERENT numbers per
+        # face), and the 3 faces meeting at a vertex agree on the value
+        # shown at that shared corner -- see numbering.d4_vertex_values
+        # and _d4_corner_labels, which maps this face's UV corners back
+        # to the real mesh vertices that landed there. (An earlier
+        # version rendered the face's single assigned value at all 3
+        # corners; corrected per direct user feedback.)
         #
-        # An earlier version placed the 3 copies on a fixed-radius circle
-        # (equal distance from center for all 3). That's the WRONG shape:
-        # confirmed via manual batch regeneration that only the "top"
-        # copy landed near a real corner (and was still clipped), while
-        # both "bottom" copies rendered well inside the face, nowhere
-        # near the actual bottom-left/bottom-right vertices -- visible as
-        # faint marks near the middle of the face rather than at its
-        # corners. Root cause: a real equilateral triangle's vertices are
-        # NOT equidistant from its own bounding-box center (which is what
-        # _unwrap_faces_to_full_square centers UV coordinates on) -- the
-        # two base vertices sit farther from that center than the apex
-        # does. The circle assumption ignored this, so the two "base"
-        # copies ended up positioned much closer to center (in UV terms)
-        # than the real base vertices.
-        #
-        # Fixed by computing the actual bounding-box-relative vertex
-        # offsets of an equilateral triangle whose half-width matches
-        # _unwrap_faces_to_full_square's default margin (0.1), i.e.
-        # half_width = 0.5 - 0.1 = 0.4 (UV-delta units), half_height =
-        # half_width * sqrt(3)/2 (an equilateral triangle's height/width
-        # ratio) -- then converting UV-delta units to this function's
-        # world-space scene via world = uv_delta * ortho_scale (this
-        # camera's ortho_scale=1.4 means world spans [-0.7,0.7] map to
-        # UV [0,1]), and applying `inset` (0.55, matching the engrave
-        # path's own corner inset) to bring each copy in from the true
-        # vertex position for clearance from the real edge. Verified via
-        # full-pipeline render (real UV unwrap + composite + 3D render)
-        # during this fix: all three copies now appear at the face's
-        # actual three corners.
-        label = glyph_label(value, glyph_style, die_type)
-        font_size = _proportional_font_size(inradius / size_mm, label) * DECAL_FONT_CANVAS_SCALE
+        # Corner geometry: an earlier version placed the 3 copies on a
+        # fixed-radius circle. That's the WRONG shape: an equilateral
+        # triangle's vertices are NOT equidistant from its own
+        # bounding-box center (which is what _unwrap_faces_to_full_square
+        # centers UV coordinates on) -- the two base vertices sit farther
+        # from that center than the apex does. Fixed by computing the
+        # actual bounding-box-relative vertex offsets of an equilateral
+        # triangle whose half-width matches the unwrap's margin
+        # (half_width = 0.5 - 0.1 = 0.4 UV-delta units, half_height =
+        # half_width * sqrt(3)/2), converted to world units via
+        # world = uv_delta * ortho_scale, with `inset` (0.55, matching
+        # the engrave path) for clearance from the real edge. Verified
+        # via full-pipeline render during that fix.
+        base_labels = corner_labels if corner_labels is not None else [
+            glyph_label(value, glyph_style, die_type)
+        ] * 3
         ortho_scale = 1.4
         inset = 0.55
         half_width = 0.4
         half_height = half_width * math.sqrt(3) / 2
         corners = [(0.0, half_height), (-half_width, -half_height), (half_width, -half_height)]
-        for cx, cy in corners:
+        for (cx, cy), label in zip(corners, base_labels):
+            font_size = _proportional_font_size(
+                inradius / size_mm, label,
+                width_per_em=_label_width_per_em(label, font_id, glyph_style),
+            ) * DECAL_FONT_CANVAS_SCALE * D4_CORNER_FONT_SCALE
             angle = math.atan2(cy, cx)
             ox, oy = cx * inset * ortho_scale, cy * inset * ortho_scale
             bpy.ops.object.text_add(location=(ox, oy, 0))
@@ -1126,13 +1457,28 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
             # its own corner (the apex, straight up, needs zero rotation
             # since text already reads "up" by default).
             txt_obj.rotation_euler = (0, 0, angle - math.pi / 2)
+            txt_obj.data.materials.append(ink_mat)
             bpy.context.collection.objects.unlink(txt_obj)
             scene.collection.objects.link(txt_obj)
             glyph_objs.append(txt_obj)
     else:
         label = glyph_label(value, glyph_style, die_type)
         font_size = _proportional_font_size(inradius / size_mm, label) * DECAL_FONT_CANVAS_SCALE
-        bpy.ops.object.text_add(location=(0, 0, 0))
+        # Exact canvas-space width clamp: the face's larger bbox extent
+        # (face_span, mm) maps to (1 - 2*margin) * ortho_scale = 1.12
+        # canvas units (see _unwrap_faces_to_full_square), so the face
+        # inradius in canvas units is (inradius / face_span) * 1.12. The
+        # character-count shrink alone underestimates full-width CJK
+        # labels badly enough for strokes to visibly cross face edges
+        # (confirmed on a real d20 batch).
+        width_per_em = _label_width_per_em(label, font_id, glyph_style)
+        if face_span and width_per_em > 0:
+            inradius_canvas = (inradius / face_span) * 1.12
+            font_size = min(
+                font_size,
+                MAX_LABEL_WIDTH_INRADIUS_FRACTION * inradius_canvas / width_per_em,
+            )
+        bpy.ops.object.text_add(location=(anchor_x, anchor_y, 0))
         txt_obj = bpy.context.active_object
         txt_obj.data.body = label
         font = _load_font(font_id, glyph_style)
@@ -1141,6 +1487,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
         txt_obj.data.align_x = 'CENTER'
         txt_obj.data.align_y = 'CENTER'
         txt_obj.data.size = font_size
+        txt_obj.data.materials.append(ink_mat)
         bpy.context.collection.objects.unlink(txt_obj)
         scene.collection.objects.link(txt_obj)
         glyph_objs.append(txt_obj)
@@ -1166,5 +1513,7 @@ def _render_label_to_image(value, glyph_style, font_id, die_type, image_path, re
 
     bpy.data.objects.remove(light_obj, do_unlink=True)
     bpy.data.lights.remove(light_data)
+
+    bpy.data.materials.remove(ink_mat)
 
     bpy.data.scenes.remove(scene)

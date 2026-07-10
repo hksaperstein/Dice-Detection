@@ -97,7 +97,13 @@ def _generate_from_params(asset_id, params, outdir):
         mat = materials.build_material(die_obj.name, params.material_category, params.material_params)
         materials.apply_material(die_obj, mat, slot_index=0)
         if params.glyph_fill == "painted":
-            fill_mat = materials.build_fill_material(die_obj.name, params.material_params)
+            # Fill lightness is chosen from the base material's REAL
+            # rendered luminance, not its HSV params -- see
+            # materials.build_fill_material.
+            base_luminance = glyphs.material_rendered_luminance(mat, outdir, asset_id)
+            fill_mat = materials.build_fill_material(
+                die_obj.name, params.material_params, base_luminance=base_luminance,
+            )
             materials.apply_material(die_obj, fill_mat, slot_index=1)
     else:
         engraving_warnings = []

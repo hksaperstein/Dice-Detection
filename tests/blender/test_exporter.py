@@ -359,11 +359,18 @@ def test_export_asset_bevel_does_not_runaway_tessellate_an_engraved_die():
     faces_post = len(bm_post.faces)
     bm_post.free()
 
-    assert faces_pre < faces_post < faces_pre * 2, (
+    # Upper bound recalibrated from 2x when the intentional RecessSoften
+    # pass landed (see exporter.export_asset): rounding every recess
+    # crease edge with 2 segments legitimately grows an engraved die's
+    # face count ~3.3x (measured on this exact d8 case). 5x still cleanly
+    # catches the original angle-based runaway (which grew a single
+    # engraved cube 1,314 -> 17,754 faces, ~13.5x) while accommodating
+    # the intentional growth.
+    assert faces_pre < faces_post < faces_pre * 5, (
         f"bevel grew face count from {faces_pre} to {faces_post} -- expected "
-        f"some growth from rounding structural edges (faces_pre < faces_post), "
-        f"but not the runaway growth that matches the confirmed angle-based "
-        f"tessellation bug (faces_post < faces_pre * 2)"
+        f"growth from rounding structural edges plus the intentional "
+        f"recess-soften pass, but not the runaway growth that matches the "
+        f"confirmed angle-based tessellation bug (faces_post < faces_pre * 5)"
     )
 
     bpy.data.objects.remove(obj, do_unlink=True)

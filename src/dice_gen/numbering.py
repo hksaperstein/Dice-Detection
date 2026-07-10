@@ -32,6 +32,21 @@ def get_values(die_type):
     return list(NUMBERING_SCHEMES[die_type]["values"])
 
 
+def d4_vertex_values(num_vertices=4):
+    """
+    Real vertex-read d4 convention: values belong to VERTICES, not faces.
+    Each face displays the values of its own 3 corners (3 different
+    numbers per face), and all 3 faces meeting at a vertex show that
+    vertex's value at their shared corner -- the rolled result is read at
+    the apex vertex. Which value lands on which physical vertex is not
+    standardized across manufacturers, so vertex-index order is used
+    deterministically.
+
+    Returns {vertex_index: value}.
+    """
+    return {vi: vi + 1 for vi in range(num_vertices)}
+
+
 def assign_values_to_opposite_pairs(die_type, face_pairs, hemisphere_of_face=None):
     """
     face_pairs: list of (face_index_a, face_index_b) tuples covering every

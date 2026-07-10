@@ -281,8 +281,14 @@ def test_engraved_glyphs_use_pristine_face_orientations_not_reindexed_mid_loop()
     # Sanity bounds: 10 numeral cuts should remove a modest fraction of the
     # die's volume, not gut it (which is what happened when cutters ended up
     # applied at wildly wrong locations/sizes due to the drift bug).
+    # Lower bound recalibrated when ENGRAVE_DEPTH_FRACTION dropped
+    # 0.02 -> 0.01 (user-requested shallower engraving): 10 real cuts at
+    # depth 0.01 empirically remove ~0.0009 of the volume, so 0.0003
+    # still distinguishes "cuts genuinely registered" from the
+    # near-zero-effect no-op failure mode while accommodating the
+    # shallower depth.
     fraction_removed = (volume_before - volume_after) / volume_before
-    assert 0.001 < fraction_removed < 0.5, (
+    assert 0.0003 < fraction_removed < 0.5, (
         f"unexpected volume loss fraction {fraction_removed} "
         f"(before={volume_before}, after={volume_after})"
     )
@@ -1326,7 +1332,12 @@ def test_apply_engraved_glyphs_uses_load_font_with_correct_glyph_style():
     finally:
         glyphs._load_font = real_load_font
 
-    assert len(calls) == 6, f"expected one _load_font call per face cut, got {len(calls)}"
+    # At least one call per face cut; _label_width_per_em's real-width
+    # measurement (added for the label-width clamp) legitimately calls
+    # _load_font once more per distinct label, so the exact count is no
+    # longer 1:1 with cuts -- the wiring property under test is that
+    # EVERY call carries this die's own font_id/glyph_style.
+    assert len(calls) >= 6, f"expected at least one _load_font call per face cut, got {len(calls)}"
     assert all(c == ("font_serif_regular", "roman_numerals") for c in calls), calls
 
     bpy.data.objects.remove(obj, do_unlink=True)
@@ -1362,7 +1373,10 @@ def test_apply_decal_glyphs_uses_load_font_with_correct_glyph_style():
     finally:
         glyphs._load_font = real_load_font
 
-    assert len(calls) == 6, f"expected one _load_font call per face, got {len(calls)}"
+    # See the engraved-path spy test above: _label_width_per_em adds one
+    # extra _load_font call per distinct label, so assert on argument
+    # correctness for every call, not an exact 1:1-with-faces count.
+    assert len(calls) >= 6, f"expected at least one _load_font call per face, got {len(calls)}"
     assert all(c == ("font_display_condensed", "greek_numerals") for c in calls), calls
 
     bpy.data.objects.remove(obj, do_unlink=True)
@@ -1387,9 +1401,13 @@ def test_face_vertex_orientations_returns_one_outward_pointing_matrix_per_vertex
 
     orientations = glyphs._face_vertex_orientations(obj.data, face, obj.matrix_world)
     assert len(orientations) == 3
+    # Each entry is (vertex_index, matrix) so callers can key values to
+    # VERTICES (the real vertex-read convention) -- indices must match
+    # the face's own vertex order.
+    assert [vi for vi, _ in orientations] == list(face.vertices)
 
     center = obj.matrix_world @ face.center
-    for vertex_index, orient in zip(face.vertices, orientations):
+    for vertex_index, orient in [(vi, m) for vi, m in orientations]:
         vertex_world = obj.matrix_world @ obj.data.vertices[vertex_index].co
         expected_radial = (vertex_world - center).normalized()
 
@@ -1886,18 +1904,19 @@ def test_proportional_font_size_shrinks_for_longer_labels():
     size_5_char = _proportional_font_size(inradius, "XVIII")
 
     assert size_1_char > size_2_char > size_5_char
-    assert size_1_char == inradius * 0.5
+    assert size_1_char == inradius * 0.9
 
 
 def test_engrave_depth_fraction_is_shallower_than_prior_value():
     """
-    Explicit user request: "all engravings should be even shallower" --
-    this session had already reduced ENGRAVE_DEPTH_FRACTION once (0.04 ->
-    0.03); this reduces it again.
+    Explicit user request, repeatedly: 0.04 -> 0.03 -> 0.02 -> 0.01 ->
+    0.003 ("a fraction of a fraction of a fraction of a fingernail
+    deep"), paired with always-painted contrasting fill so visibility
+    comes from color, not depth.
     """
     from dice_gen.glyphs import ENGRAVE_DEPTH_FRACTION
 
-    assert ENGRAVE_DEPTH_FRACTION == 0.02
+    assert ENGRAVE_DEPTH_FRACTION == 0.003
 
 
 def run():

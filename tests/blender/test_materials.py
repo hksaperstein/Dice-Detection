@@ -114,17 +114,51 @@ def test_build_material_sets_diffuse_color_for_solid_shading_across_all_categori
         )
 
 
-def test_build_fill_material_sets_diffuse_color_to_match_fill_hue():
+def test_build_fill_material_contrasts_lightness_against_base():
+    """
+    The fill's job is readable engraved numerals: a light base die
+    (value >= 0.5) must get a near-black fill and a dark base a
+    near-white fill, with diffuse_color mirroring the same color for
+    Solid-shading visibility. Lightness opposition replaced the old
+    complementary-hue-at-fixed-brightness rule, which could land at
+    nearly the same luminance as the base.
+    """
     from dice_gen import materials
 
-    params = {"hue": 0.2, "saturation": 0.8, "value": 0.5, "roughness": 0.4}
-    fill_hue = (params["hue"] + 0.5) % 1.0
-    expected = materials._hsv_to_rgba(fill_hue, 0.8, 0.9)
+    light_base = {"hue": 0.2, "saturation": 0.8, "value": 0.8, "roughness": 0.4}
+    dark_base = {"hue": 0.2, "saturation": 0.8, "value": 0.25, "roughness": 0.4}
 
-    mat = materials.build_fill_material("test_die", params)
-    actual = tuple(mat.diffuse_color)
-    assert all(abs(a - e) < 1e-5 for a, e in zip(actual, expected)), (
-        f"expected diffuse_color close to {expected}, got {actual}"
+    fill_for_light = tuple(materials.build_fill_material("t1", light_base).diffuse_color)
+    fill_for_dark = tuple(materials.build_fill_material("t2", dark_base).diffuse_color)
+
+    lum_for_light = 0.2126 * fill_for_light[0] + 0.7152 * fill_for_light[1] + 0.0722 * fill_for_light[2]
+    lum_for_dark = 0.2126 * fill_for_dark[0] + 0.7152 * fill_for_dark[1] + 0.0722 * fill_for_dark[2]
+
+    assert lum_for_light < 0.15, (
+        f"light base die must get a dark fill, got luminance {lum_for_light} ({fill_for_light})"
+    )
+    assert lum_for_dark > 0.7, (
+        f"dark base die must get a light fill, got luminance {lum_for_dark} ({fill_for_dark})"
+    )
+
+    bsdf = materials.build_fill_material("t3", light_base).node_tree.nodes["Principled BSDF"]
+    base_color = tuple(bsdf.inputs["Base Color"].default_value)
+    diffuse = tuple(materials.build_fill_material("t4", light_base).diffuse_color)
+    assert all(abs(a - e) < 1e-5 for a, e in zip(base_color, diffuse)), (
+        f"diffuse_color must mirror the node Base Color, got {diffuse} vs {base_color}"
+    )
+
+    # Real rendered luminance overrides the params proxy when provided:
+    # a nominally-light params value with a measured-dark luminance must
+    # yield a LIGHT fill (the real-world case: a translucent value=0.55
+    # die that renders dark olive).
+    fill_lum_override = tuple(
+        materials.build_fill_material("t5", light_base, base_luminance=0.2).diffuse_color
+    )
+    lum_override = 0.2126 * fill_lum_override[0] + 0.7152 * fill_lum_override[1] + 0.0722 * fill_lum_override[2]
+    assert lum_override > 0.7, (
+        f"measured-dark base must get a light fill regardless of params, "
+        f"got luminance {lum_override} ({fill_lum_override})"
     )
 
 
@@ -136,7 +170,7 @@ def run():
     test_apply_material_base_then_fill_sequence_lands_in_correct_slots()
     test_build_fill_material_returns_valid_material()
     test_build_material_sets_diffuse_color_for_solid_shading_across_all_categories()
-    test_build_fill_material_sets_diffuse_color_to_match_fill_hue()
+    test_build_fill_material_contrasts_lightness_against_base()
 
 
 run_and_report(run)

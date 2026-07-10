@@ -64,14 +64,25 @@ def test_generate_set_batch_produces_matching_set():
         assert len(material_categories) == 1
         assert len(font_ids) == 1
 
-        non_pct_glyph_styles = {
-            record["glyph_style"] for record in manifest if record["die_type"] != "d10_pct"
+        # d10_pct is always arabic; d10 falls back to arabic when the set's
+        # shared style is roman/greek (neither numeral system has a zero,
+        # and d10's values include 0 -- see sampler.sample_set). The
+        # remaining 5 dice always share exactly one sampled style.
+        shared_styles = {
+            record["glyph_style"] for record in manifest
+            if record["die_type"] not in ("d10", "d10_pct")
         }
-        assert len(non_pct_glyph_styles) == 1, (
-            f"expected the 6 non-percentile dice to share one glyph_style, got {non_pct_glyph_styles}"
+        assert len(shared_styles) == 1, (
+            f"expected d4/d6/d8/d12/d20 to share one glyph_style, got {shared_styles}"
         )
+        shared = next(iter(shared_styles))
         pct_record = next(r for r in manifest if r["die_type"] == "d10_pct")
         assert pct_record["glyph_style"] == "arabic_numerals"
+        d10_record = next(r for r in manifest if r["die_type"] == "d10")
+        if shared in ("roman_numerals", "greek_numerals"):
+            assert d10_record["glyph_style"] == "arabic_numerals"
+        else:
+            assert d10_record["glyph_style"] == shared
 
 
 def run():
