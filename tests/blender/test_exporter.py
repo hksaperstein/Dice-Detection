@@ -11,7 +11,8 @@ from _harness import run_and_report
 
 def test_export_asset_writes_usd_manifest_and_thumbnail():
     import bpy
-    from dice_gen import geometry, materials, exporter
+    from datagen.domains.dice import geometry
+    from datagen import materials, exporter
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     mat = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
@@ -55,7 +56,8 @@ def test_export_asset_blend_file_contains_only_the_die_object():
     established explicitly in export_asset itself.
     """
     import bpy
-    from dice_gen import geometry, materials, exporter
+    from datagen.domains.dice import geometry
+    from datagen import materials, exporter
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     mat = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
@@ -96,7 +98,8 @@ def test_export_asset_blend_files_do_not_accumulate_across_multiple_exports():
     object/mesh/material data, not the other's.
     """
     import bpy
-    from dice_gen import geometry, materials, exporter
+    from datagen.domains.dice import geometry
+    from datagen import materials, exporter
 
     obj1 = geometry.build_die_base_mesh("d6", size_mm=16.0)
     mat1 = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
@@ -196,7 +199,8 @@ def test_export_asset_saves_blend_before_usd_and_stl_export():
     don't exist on disk yet.
     """
     import bpy
-    from dice_gen import geometry, materials, exporter
+    from datagen.domains.dice import geometry
+    from datagen import materials, exporter
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     mat = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
@@ -248,7 +252,8 @@ def test_export_asset_uses_fillet_segments_not_flat_chamfer():
     """
     import bpy
     import math
-    from dice_gen import geometry, materials, exporter
+    from datagen.domains.dice import geometry
+    from datagen import materials, exporter
 
     size_mm = 16.0
     bevel_fraction = 0.04
@@ -326,7 +331,8 @@ def test_export_asset_bevel_does_not_runaway_tessellate_an_engraved_die():
     """
     import bmesh
     import bpy
-    from dice_gen import geometry, glyphs, materials, exporter
+    from datagen.domains.dice import geometry, glyphs
+    from datagen import materials, exporter
 
     size_mm = 19.68719216365438
     obj = geometry.build_die_base_mesh("d8", size_mm=size_mm)
@@ -392,7 +398,8 @@ def test_save_blend_copy_sets_every_view3d_to_material_preview_shading():
     Preview the default instead, so textures show too).
     """
     import bpy
-    from dice_gen import geometry, materials, exporter
+    from datagen.domains.dice import geometry
+    from datagen import materials, exporter
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     mat = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
@@ -423,7 +430,8 @@ def test_save_blend_copy_sets_every_view3d_to_material_preview_shading():
 def test_mesh_quality_warning_flags_a_degenerate_mesh():
     import bmesh
     import bpy
-    from dice_gen import geometry, exporter
+    from datagen.domains.dice import geometry
+    from datagen import exporter
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
 
@@ -447,7 +455,8 @@ def test_mesh_quality_warning_flags_a_degenerate_mesh():
 
 def test_mesh_quality_warning_is_none_for_a_clean_die():
     import bpy
-    from dice_gen import geometry, exporter
+    from datagen.domains.dice import geometry
+    from datagen import exporter
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     warning = exporter._mesh_quality_warning(obj)
@@ -458,7 +467,8 @@ def test_mesh_quality_warning_is_none_for_a_clean_die():
 
 def test_export_asset_sets_mesh_quality_warnings_key():
     import bpy
-    from dice_gen import geometry, materials, exporter
+    from datagen.domains.dice import geometry
+    from datagen import materials, exporter
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     mat = materials.build_material("d6", "opaque", {"hue": 0.3, "saturation": 0.7, "value": 0.6, "roughness": 0.4})
@@ -499,7 +509,8 @@ def test_export_asset_blend_image_textures_resolve_after_fresh_reload():
     existing file -- the only way to catch this class of bug.
     """
     import bpy
-    from dice_gen import geometry, materials, exporter
+    from datagen.domains.dice import geometry
+    from datagen import materials, exporter
 
     with tempfile.TemporaryDirectory() as outdir:
         obj = geometry.build_die_base_mesh("d6", size_mm=16.0)

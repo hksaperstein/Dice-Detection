@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from dice_gen import orchestrator
+from datagen.domains.dice import orchestrator
 
 
 def main():

@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from dice_gen import numbering
+from datagen.domains.dice import numbering
 
 
 def test_get_values_d20_has_20_unique_values_1_through_20():

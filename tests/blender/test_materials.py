@@ -9,7 +9,7 @@ from _harness import run_and_report
 
 def test_all_material_categories_build_without_error():
     import bpy
-    from dice_gen import materials
+    from datagen import materials
 
     params = {
         "hue": 0.5, "saturation": 0.7, "value": 0.6, "roughness": 0.3,
@@ -25,7 +25,8 @@ def test_all_material_categories_build_without_error():
 
 def test_apply_material_appends_to_first_empty_slot():
     import bpy
-    from dice_gen import geometry, materials
+    from datagen.domains.dice import geometry
+    from datagen import materials
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     mat = materials.build_material("d6", "opaque", {"hue": 0.2, "saturation": 0.8, "value": 0.5, "roughness": 0.4})
@@ -36,7 +37,7 @@ def test_apply_material_appends_to_first_empty_slot():
 
 
 def test_metallic_material_sets_metallic_input_to_one():
-    from dice_gen import materials
+    from datagen import materials
 
     mat = materials.build_material("d20", "metallic", {"hue": 0.6, "saturation": 0.1, "value": 0.8, "roughness": 0.2})
     bsdf = mat.node_tree.nodes["Principled BSDF"]
@@ -45,7 +46,8 @@ def test_metallic_material_sets_metallic_input_to_one():
 
 def test_apply_material_at_slot_index_one_on_empty_mesh_pads_slot_zero():
     import bpy
-    from dice_gen import geometry, materials
+    from datagen.domains.dice import geometry
+    from datagen import materials
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     fill_mat = materials.build_fill_material("d6", {"hue": 0.2, "saturation": 0.8, "value": 0.5, "roughness": 0.4})
@@ -58,7 +60,8 @@ def test_apply_material_at_slot_index_one_on_empty_mesh_pads_slot_zero():
 
 def test_apply_material_base_then_fill_sequence_lands_in_correct_slots():
     import bpy
-    from dice_gen import geometry, materials
+    from datagen.domains.dice import geometry
+    from datagen import materials
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     base_mat = materials.build_material("d6", "opaque", {"hue": 0.2, "saturation": 0.8, "value": 0.5, "roughness": 0.4})
@@ -72,7 +75,7 @@ def test_apply_material_base_then_fill_sequence_lands_in_correct_slots():
 
 
 def test_build_fill_material_returns_valid_material():
-    from dice_gen import materials
+    from datagen import materials
 
     mat = materials.build_fill_material("test_die", {"hue": 0.3, "saturation": 0.8, "value": 0.6, "roughness": 0.4})
     assert mat is not None
@@ -97,7 +100,7 @@ def test_build_material_sets_diffuse_color_for_solid_shading_across_all_categori
     diffuse_color should still reflect the original flat representative
     color regardless.
     """
-    from dice_gen import materials
+    from datagen import materials
 
     params = {
         "hue": 0.5, "saturation": 0.7, "value": 0.6, "roughness": 0.3,
@@ -123,7 +126,7 @@ def test_build_fill_material_contrasts_lightness_against_base():
     complementary-hue-at-fixed-brightness rule, which could land at
     nearly the same luminance as the base.
     """
-    from dice_gen import materials
+    from datagen import materials
 
     light_base = {"hue": 0.2, "saturation": 0.8, "value": 0.8, "roughness": 0.4}
     dark_base = {"hue": 0.2, "saturation": 0.8, "value": 0.25, "roughness": 0.4}

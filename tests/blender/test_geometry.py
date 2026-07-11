@@ -9,7 +9,7 @@ from _harness import run_and_report
 
 def test_all_seven_dice_build_with_correct_topology():
     import bpy
-    from dice_gen import geometry
+    from datagen.domains.dice import geometry
 
     for die_type, spec in geometry.DIE_SPECS.items():
         obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
@@ -31,7 +31,7 @@ def test_all_seven_dice_build_with_correct_topology():
 
 def test_opposite_face_pairs_are_geometrically_antiparallel_for_d6():
     import bpy
-    from dice_gen import geometry
+    from datagen.domains.dice import geometry
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     pairs = geometry.compute_opposite_face_pairs(obj)
@@ -49,7 +49,7 @@ def test_opposite_face_pairs_are_geometrically_antiparallel_for_d6():
 
 def test_d4_opposite_face_pairs_returns_two_pairs_covering_all_faces():
     import bpy
-    from dice_gen import geometry
+    from datagen.domains.dice import geometry
 
     obj = geometry.build_die_base_mesh("d4", size_mm=16.0)
     pairs = geometry.compute_opposite_face_pairs(obj)
@@ -72,7 +72,7 @@ def test_build_die_base_mesh_marks_all_edges_with_full_bevel_weight():
     """
     import bmesh
     import bpy
-    from dice_gen import geometry
+    from datagen.domains.dice import geometry
 
     for die_type, spec in geometry.DIE_SPECS.items():
         obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
@@ -102,7 +102,7 @@ def test_compute_face_poles_maps_every_d8_and_d10_face_to_exactly_one_pole():
     global-up-vector convention could not express.
     """
     import bpy
-    from dice_gen import geometry
+    from datagen.domains.dice import geometry
 
     for die_type in ("d8", "d10", "d10_pct"):
         obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
@@ -126,7 +126,7 @@ def test_compute_face_poles_maps_every_d8_and_d10_face_to_exactly_one_pole():
 
 def test_compute_face_poles_returns_none_for_non_bipyramid_dice():
     import bpy
-    from dice_gen import geometry
+    from datagen.domains.dice import geometry
 
     for die_type in ("d4", "d6", "d12", "d20"):
         obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
@@ -148,7 +148,7 @@ def test_assign_values_to_opposite_pairs_splits_d8_and_d10_hemispheres_by_parity
     asset to the next.
     """
     import bpy
-    from dice_gen import geometry, numbering
+    from datagen.domains.dice import geometry, numbering
 
     for die_type in ("d8", "d10"):
         obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
@@ -186,7 +186,7 @@ def test_assign_values_to_opposite_pairs_splits_d10_pct_hemispheres_by_tens_digi
     hemisphere, exactly as a real d10's is.
     """
     import bpy
-    from dice_gen import geometry, numbering
+    from datagen.domains.dice import geometry, numbering
 
     obj = geometry.build_die_base_mesh("d10_pct", size_mm=18.0)
     poles = geometry.compute_face_poles(obj, "d10_pct")
@@ -219,7 +219,7 @@ def test_assign_values_to_opposite_pairs_without_hemisphere_arg_is_unchanged():
     opt-in path for d8/d10.
     """
     import bpy
-    from dice_gen import geometry, numbering
+    from datagen.domains.dice import geometry, numbering
 
     for die_type in ("d4", "d6", "d12", "d20"):
         obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
@@ -240,7 +240,7 @@ def test_compute_face_inradius_matches_known_values_for_a_cube():
     check before this helper is trusted for the less-trivial polyhedra.
     """
     import bpy
-    from dice_gen import geometry
+    from datagen.domains.dice import geometry
 
     obj = geometry.build_die_base_mesh("d6", size_mm=18.0)
     for face in obj.data.polygons:
@@ -262,7 +262,7 @@ def test_compute_face_inradius_is_smaller_for_d8_and_d20_than_d6_and_d12_at_same
     geometric fact the fix depends on, not the fix itself.
     """
     import bpy
-    from dice_gen import geometry
+    from datagen.domains.dice import geometry
 
     size_mm = 18.0
     small_faced = {}

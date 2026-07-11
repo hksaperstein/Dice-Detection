@@ -9,7 +9,7 @@ from _harness import run_and_report
 
 
 def test_glyph_label_formats():
-    from dice_gen import glyphs
+    from datagen.domains.dice import glyphs
 
     assert glyphs.glyph_label(6, "arabic_numerals") == "6"
     assert glyphs.glyph_label(20, "roman_numerals") == "XX"
@@ -17,7 +17,7 @@ def test_glyph_label_formats():
 
 
 def test_glyph_label_formats_d10_pct_as_zero_padded_two_digit():
-    from dice_gen import glyphs
+    from datagen.domains.dice import glyphs
 
     assert glyphs.glyph_label(0, "arabic_numerals", die_type="d10_pct") == "00"
     assert glyphs.glyph_label(10, "arabic_numerals", die_type="d10_pct") == "10"
@@ -25,7 +25,7 @@ def test_glyph_label_formats_d10_pct_as_zero_padded_two_digit():
 
 
 def test_glyph_label_arabic_unchanged_for_non_percentile_die_types():
-    from dice_gen import glyphs
+    from datagen.domains.dice import glyphs
 
     assert glyphs.glyph_label(0, "arabic_numerals", die_type="d10") == "0"
     assert glyphs.glyph_label(6, "arabic_numerals") == "6"
@@ -41,7 +41,7 @@ def test_engraved_glyphs_reduce_solid_volume_for_d10_pct():
     might introduce that a pure glyph_label unit test can't see.
     """
     import bpy
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d10_pct"
     obj = geometry.build_die_base_mesh(die_type, size_mm=18.0)
@@ -83,7 +83,7 @@ def test_engraved_glyphs_reduce_solid_volume_for_d10_pct():
 
 def test_engraved_glyphs_reduce_solid_volume():
     import bpy
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d6"
     obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
@@ -115,7 +115,7 @@ def test_engraved_glyphs_reduce_solid_volume():
 
 def test_engraved_glyphs_blank_fill_does_not_add_second_material():
     import bpy
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d6"
     obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
@@ -137,7 +137,7 @@ def test_engraved_glyphs_blank_fill_does_not_add_second_material():
 
 def test_decal_glyphs_assigns_one_material_per_face():
     import bpy
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d6"
     obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
@@ -177,7 +177,7 @@ def test_engraved_glyphs_use_pristine_face_orientations_not_reindexed_mid_loop()
     """
     import bpy
     import bmesh
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d10"
     size_mm = 16.0
@@ -352,7 +352,7 @@ def test_engraved_greek_numerals_d12_does_not_collapse_from_unwelded_cutter():
     """
     import bpy
     import bmesh
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d12"
     size_mm = 17.89272167378179  # matches asset_00006 (seed=48) exactly
@@ -437,7 +437,7 @@ def test_engraved_greek_numerals_d10_does_not_collapse_from_exact_solver_on_alph
     """
     import bpy
     import bmesh
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d10"
     size_mm = 16.12691595326456  # matches asset_00091 (seed=133) exactly
@@ -526,7 +526,7 @@ def test_engraved_arabic_numerals_d20_does_not_silently_noop_from_exact_solver()
     """
     import bpy
     import bmesh
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d20"
     size_mm = 19.73093050365471  # matches asset_00026 (seed=68) exactly
@@ -632,7 +632,7 @@ def test_engraved_arabic_numerals_d4_does_not_leave_undetected_debris():
     """
     import bpy
     import bmesh
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d4"
     size_mm = 15.308910559884074  # matches asset_00079 (seed=121) exactly
@@ -686,7 +686,7 @@ def test_apply_engraved_glyphs_returns_empty_list_for_clean_die():
     clean asset's manifest record.
     """
     import bpy
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d6"
     obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
@@ -715,7 +715,7 @@ def test_apply_engraved_glyphs_aggregates_forced_cut_warnings():
     whether any real Blender boolean happens to fail on this run.
     """
     import bpy
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d6"
     obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
@@ -759,7 +759,7 @@ def test_boolean_diff_apply_returns_warning_when_both_solvers_fail():
     depending on finding a genuinely pathological glyph/size combination.
     """
     import bpy
-    from dice_gen import geometry, glyphs
+    from datagen.domains.dice import geometry, glyphs
 
     die_type = "d6"
     obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
@@ -820,7 +820,7 @@ def test_discard_non_body_closed_debris_returns_warning_for_manual_debris():
     import bpy
     import bmesh
     from mathutils import Vector
-    from dice_gen import geometry, glyphs
+    from datagen.domains.dice import geometry, glyphs
 
     die_type = "d6"
     obj = geometry.build_die_base_mesh(die_type, size_mm=16.0)
@@ -896,7 +896,8 @@ def test_decal_glyphs_survive_usd_export_roundtrip_without_black_faces():
     """
     import bpy
     import numpy as np
-    from dice_gen import geometry, numbering, glyphs, materials
+    from datagen.domains.dice import geometry, numbering, glyphs
+    from datagen import materials
 
     die_type = "d6"
     size_mm = 16.0
@@ -1029,7 +1030,8 @@ def test_decal_glyphs_use_asset_id_to_avoid_cross_asset_filename_collisions():
     """
     import bpy
     import numpy as np
-    from dice_gen import geometry, numbering, glyphs, materials
+    from datagen.domains.dice import geometry, numbering, glyphs
+    from datagen import materials
 
     die_type = "d8"
     size_mm = 16.0
@@ -1115,7 +1117,7 @@ def test_tangent_bitangent_only_falls_back_to_y_for_truly_vertical_normals():
     smoothly-varying Z-projection, never the flat Y fallback.
     """
     import bpy
-    from dice_gen import geometry, glyphs
+    from datagen.domains.dice import geometry, glyphs
 
     obj = geometry.build_die_base_mesh("d20", size_mm=20.0)
     for face in obj.data.polygons:
@@ -1149,7 +1151,7 @@ def test_tangent_bitangent_falls_back_to_y_for_axis_aligned_normals():
     fallback for the case it's actually needed for.
     """
     import bpy
-    from dice_gen import geometry, glyphs
+    from datagen.domains.dice import geometry, glyphs
 
     obj = geometry.build_die_base_mesh("d6", size_mm=16.0)
     found_axis_aligned_face = False
@@ -1194,7 +1196,7 @@ def test_unwrap_faces_to_full_square_covers_full_uv_range_per_face():
     differs by type.
     """
     import bpy
-    from dice_gen import geometry, glyphs
+    from datagen.domains.dice import geometry, glyphs
 
     margin = 0.1
     for die_type in ("d4", "d6", "d8", "d10", "d12", "d20"):
@@ -1247,7 +1249,7 @@ def test_load_font_maps_font_ids_to_distinct_installed_fonts():
     during planning), and that the SAME font_id returns the SAME font
     datablock on a second call (no redundant reload).
     """
-    from dice_gen import glyphs
+    from datagen.domains.dice import glyphs
 
     seen_filepaths = set()
     for font_id, expected_path in glyphs.FONT_FILES.items():
@@ -1281,7 +1283,7 @@ def test_load_font_returns_none_for_cjk_numerals_regardless_of_font_id():
     txt_obj.data.font at Blender's default rather than swapping to a font
     that can't render the requested characters.
     """
-    from dice_gen import glyphs
+    from datagen.domains.dice import glyphs
 
     for font_id in glyphs.FONT_FILES:
         font = glyphs._load_font(font_id, glyph_style="cjk_numerals")
@@ -1291,7 +1293,7 @@ def test_load_font_returns_none_for_cjk_numerals_regardless_of_font_id():
 
 
 def test_load_font_returns_none_for_unrecognized_font_id():
-    from dice_gen import glyphs
+    from datagen.domains.dice import glyphs
 
     font = glyphs._load_font("not_a_real_font_id", glyph_style="arabic_numerals")
     assert font is None
@@ -1306,7 +1308,7 @@ def test_apply_engraved_glyphs_uses_load_font_with_correct_glyph_style():
     without re-deriving font state from the final baked mesh.
     """
     import bpy
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d6"
     size_mm = 16.0
@@ -1345,7 +1347,8 @@ def test_apply_engraved_glyphs_uses_load_font_with_correct_glyph_style():
 
 def test_apply_decal_glyphs_uses_load_font_with_correct_glyph_style():
     import bpy
-    from dice_gen import geometry, numbering, glyphs, materials
+    from datagen.domains.dice import geometry, numbering, glyphs
+    from datagen import materials
 
     die_type = "d6"
     size_mm = 16.0
@@ -1393,7 +1396,7 @@ def test_face_vertex_orientations_returns_one_outward_pointing_matrix_per_vertex
     vertex-read d4 dice arrange their three per-face numerals.
     """
     import bpy
-    from dice_gen import geometry, glyphs
+    from datagen.domains.dice import geometry, glyphs
 
     obj = geometry.build_die_base_mesh("d4", size_mm=16.0)
     face = obj.data.polygons[0]
@@ -1442,7 +1445,7 @@ def test_apply_engraved_glyphs_cuts_three_corners_per_face_for_d4_numerals():
     used elsewhere in this file.
     """
     import bpy
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d4"
     size_mm = 16.0
@@ -1484,7 +1487,7 @@ def test_apply_engraved_glyphs_does_not_triple_pips_for_d4():
     _boolean_diff_apply call per pip in PIP_VALUE_LAYOUTS[value], not 3x.
     """
     import bpy
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d4"
     size_mm = 16.0
@@ -1527,7 +1530,7 @@ def test_apply_engraved_glyphs_does_not_triple_numerals_for_non_d4_dice():
     total), not 3 per face.
     """
     import bpy
-    from dice_gen import geometry, numbering, glyphs
+    from datagen.domains.dice import geometry, numbering, glyphs
 
     die_type = "d6"
     size_mm = 16.0
@@ -1605,7 +1608,7 @@ def test_render_label_to_image_renders_three_corner_copies_for_d4():
     """
     import bpy
     import numpy as np
-    from dice_gen import geometry, glyphs
+    from datagen.domains.dice import geometry, glyphs
 
     resolution = 256
     size_mm = 18.0
@@ -1666,7 +1669,7 @@ def test_unwrap_faces_to_full_square_gives_d4_faces_consistent_apex_up_orientati
     the HIGH v value, consistently -- i.e. every face is apex-up.
     """
     import bpy
-    from dice_gen import geometry, glyphs
+    from datagen.domains.dice import geometry, glyphs
 
     obj = geometry.build_die_base_mesh("d4", size_mm=16.0)
     glyphs._unwrap_faces_to_full_square(obj, "d4")
@@ -1714,7 +1717,7 @@ def test_unwrap_faces_to_full_square_does_not_mirror_any_triangular_face():
     other triangular face's, for d4, d8, and d20.
     """
     import bpy
-    from dice_gen import geometry, glyphs
+    from datagen.domains.dice import geometry, glyphs
 
     def signed_area(coords):
         area = 0.0
@@ -1754,7 +1757,7 @@ def test_tangent_bitangent_up_reference_overrides_global_up_hint():
     test_face_orientation_matrix_mirrors_between_d8_hemispheres below for
     the end-to-end confirmation this produces the real mirrored pattern.
     """
-    from dice_gen.glyphs import _tangent_bitangent
+    from datagen.domains.dice.glyphs import _tangent_bitangent
     from mathutils import Vector
 
     normal = Vector((0, 0, 1))
@@ -1783,8 +1786,8 @@ def test_face_orientation_matrix_mirrors_between_d8_hemispheres():
     under the old global-Z-projection convention.
     """
     import bpy
-    from dice_gen import geometry
-    from dice_gen.glyphs import _face_orientation_matrix
+    from datagen.domains.dice import geometry
+    from datagen.domains.dice.glyphs import _face_orientation_matrix
 
     obj = geometry.build_die_base_mesh("d8", size_mm=18.0)
     poles = geometry.compute_face_poles(obj, "d8")
@@ -1813,7 +1816,7 @@ def test_apply_engraved_glyphs_orients_d8_hemispheres_toward_their_own_pole():
     public entry point.
     """
     import bpy
-    from dice_gen import geometry, glyphs
+    from datagen.domains.dice import geometry, glyphs
 
     size_mm = 18.0
     obj = geometry.build_die_base_mesh("d8", size_mm=size_mm)
@@ -1855,8 +1858,8 @@ def test_unwrap_faces_to_full_square_mirrors_between_d8_hemispheres():
     real numbering convention per die type, independent of glyph_method.
     """
     import bpy
-    from dice_gen import geometry
-    from dice_gen.glyphs import _unwrap_faces_to_full_square
+    from datagen.domains.dice import geometry
+    from datagen.domains.dice.glyphs import _unwrap_faces_to_full_square
 
     obj = geometry.build_die_base_mesh("d8", size_mm=18.0)
     poles = geometry.compute_face_poles(obj, "d8")
@@ -1902,7 +1905,7 @@ def test_proportional_font_size_shrinks_for_longer_labels():
     anchors the shrink-with-length behavior the calibration depends on,
     not the exact calibrated constants themselves.
     """
-    from dice_gen.glyphs import _proportional_font_size
+    from datagen.domains.dice.glyphs import _proportional_font_size
 
     inradius = 5.0
     size_1_char = _proportional_font_size(inradius, "8")
@@ -1926,7 +1929,7 @@ def test_engrave_depth_fraction_is_shallower_than_prior_value():
     surface, penetration == this constant and micro cuts are clean --
     verified on the exact d20/greek case that previously shredded.
     """
-    from dice_gen.glyphs import (
+    from datagen.domains.dice.glyphs import (
         ENGRAVE_DEPTH_FRACTION, ENGRAVE_CUTTER_HALF_THICKNESS_FRACTION,
     )
 

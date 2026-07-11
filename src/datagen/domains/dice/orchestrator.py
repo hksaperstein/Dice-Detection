@@ -2,7 +2,8 @@ import json
 import os
 import traceback
 
-from . import exporter, geometry, glyphs, materials, numbering, sampler
+from . import geometry, glyphs, numbering, sampler
+from ... import exporter, materials
 
 
 def generate_batch(count, seed, outdir):

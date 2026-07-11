@@ -10,7 +10,7 @@ from _harness import run_and_report
 
 
 def test_generate_batch_produces_manifest_and_assets():
-    from dice_gen import orchestrator
+    from datagen.domains.dice import orchestrator
 
     with tempfile.TemporaryDirectory() as outdir:
         generated, failed = orchestrator.generate_batch(count=6, seed=1000, outdir=outdir)
@@ -41,7 +41,7 @@ def test_generate_batch_produces_manifest_and_assets():
 
 
 def test_generate_set_batch_produces_matching_set():
-    from dice_gen import orchestrator
+    from datagen.domains.dice import orchestrator
 
     with tempfile.TemporaryDirectory() as outdir:
         generated, failed = orchestrator.generate_set_batch(num_sets=1, seed=2000, outdir=outdir)

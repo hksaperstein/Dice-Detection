@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from dice_gen import sampler
+from datagen.domains.dice import sampler
 
 
 def test_sample_variant_is_reproducible_with_same_seed():
