@@ -14,6 +14,10 @@ data/yolo/
 data/real/
 models/
 yolo*.pt
+# ultralytics model.val()'s own default output dir when called without an
+# explicit project/name (evaluation/detection_eval.py's synthetic-val call) --
+# pre-existing behavior, not introduced by the 2026-07-10 platform refactor.
+/runs/
 
 # OS
 .DS_Store
