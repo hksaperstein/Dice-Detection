@@ -1,3 +1,9 @@
+# MOVED (2026-07-10)
+
+This project now lives in the `rl` monorepo under `vision/` (github.com/hksaperstein/rl). This repo is frozen at commit 7946495.
+
+---
+
 # Dice Detection
 
 Purpose: train models to recognize and classify dice by shape/sides (d4, d6, d8, d10, d12, d20).
